@@ -57,13 +57,21 @@ class VisualPlaceRecognition:
             self.extract_global_descriptors(ref_images, self.ref_descriptors)
         else:
             logging.info("Using existing reference descriptors...")
-        
+
+        # 统一预加载ref的特征向量
         self.ref_descriptors = [self.ref_descriptors]
         name2db = {n: i for i, p in enumerate(self.ref_descriptors) for n in list_h5_names(p)}
         db_names_h5 = list(name2db.keys())
         self.db_names = parse_names(prefix=None, names=None, names_all=db_names_h5)
         self.db_desc = get_descriptors(self.db_names, self.ref_descriptors, name2db)
 
+        #处理ref的pose文件 以tensor矩阵保存，顺序与ref的特征顺序对齐
+        ref_poses_dir = Path(self.ref_data_path) / "poses"
+        ref_poses = []
+        for name in self.db_names:
+            pose = np.loadtxt(Path(ref_poses_dir) / f"{Path(name).stem}.txt").reshape(4,4)
+            ref_poses.append(pose[:3,3])
+        self.ref_poses_tensor = torch.from_numpy(np.stack(ref_poses, 0)).float()
 
     def _load_pose_history(self):
         """加载历史pose信息"""
@@ -154,7 +162,7 @@ class VisualPlaceRecognition:
             last_pose=self.last_pose,
             spatial_radius=self.spatial_radius,
             use_spatial_filtering=self.use_spatial_filtering,
-            ref_poses_dir=Path(self.ref_data_path)/"poses"
+            ref_poses_tensor=self.ref_poses_tensor
         )   
         end_time = time.time()
         logging.info(f"query_image: {Path(query_image).name} pairs_from_retrieval time: {end_time - start_time:.2f} seconds")

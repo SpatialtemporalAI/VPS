@@ -7,6 +7,7 @@ import logging
 import cv2
 import sys
 import datetime
+import json
 
 app = Flask(__name__)
 
@@ -19,7 +20,7 @@ def create_app(config_path: str = "configs/default.yaml"):
     vps = VisualPositioningSystem(config_path)
     # Configure logging
     # Initialize VPS system
-    logger.info("VPS system initialized successfully")
+    logging.info("VPS system initialized successfully")
     
     return app
 
@@ -81,6 +82,7 @@ def map2map(x, y, theta):
     new_theta = np.arctan2(new_dir[1], new_dir[0])
 
     return tgt_pos[0], tgt_pos[1], new_theta
+
 @app.route('/localize', methods=['POST'])
 def localize():
     """Localization endpoint."""
@@ -90,7 +92,7 @@ def localize():
         if 'image' not in request.files:
             return jsonify({'error': 'No image file provided'}), 400
         rgb_file = request.files['image']
-        print(f"rgb_file: {rgb_file.filename}")
+        logging.info(f"rgb_file: {rgb_file.filename}")
         if rgb_file.filename == '':
             return jsonify({'error': 'No image file selected'}), 400
         # Check file format
@@ -109,7 +111,7 @@ def localize():
             depth_file = request.files['depth']
             
             if depth_file and depth_file.filename:
-                print(f"接收到深度文件: {depth_file.filename}")
+                logging.info(f"接收到深度文件: {depth_file.filename}")
                 file_ext = os.path.splitext(depth_file.filename)[1].lower()
                 depth_path = os.path.join(vps.config['service']['temp_dir'], vps.config['service']['temp_depth_name'])
 
@@ -121,15 +123,25 @@ def localize():
                     if depth_data_png is not None:
                         depth_data = depth_data_png.astype(np.float32) / 1000.0
                         np.save(depth_path, depth_data)
-                        print(f"PNG深度文件已转换为NPY并保存到: {depth_path}")
+                        logging.info(f"PNG深度文件已转换为NPY并保存到: {depth_path}")
 
                 elif file_ext == '.npy':
                     # 直接保存npy文件
                     depth_file.save(depth_path)
-                    print(f"NPY深度文件已保存到: {depth_path}")
-        
-        # 执行定位 (depth_path可能是None)
-        pose3d= vps.localize(query_image_path,depth_path)
+                    logging.info(f"NPY深度文件已保存到: {depth_path}")
+        ##
+        ##
+        # 指定大致pose范围
+        last_pose = None
+        if 'last_pose' in request.files:
+            last_pose_file = request.files['last_pose']
+            last_pose_json = json.load(last_pose_file)
+            last_pose = np.array([last_pose_json['x'], last_pose_json['y'], last_pose_json['z']])
+        if 'last_pose' in request.form:
+            last_pose_json = json.loads(request.form['last_pose'])
+            last_pose = np.array([last_pose_json['x'], last_pose_json['y'], last_pose_json['z']])
+        # 执行定位 (depth_path可能是None,last_pose可能是None)
+        pose3d= vps.localize(query_image_path,depth_path, last_pose)
         
         # Convert numpy arrays to lists for JSON serialization
         if pose3d is not None:
@@ -143,12 +155,12 @@ def localize():
                 'y': ans[1],
                 'theta': ans[2]
             }
-            print(f"ans: {ans}")
+            logging.info(f"ans: {ans}")
             return jsonify(ans), 200
         else:
             return jsonify({'error': 'No pose found'}), 400
     except Exception as e:
-        logger.error(f"Error during localization: {str(e)}")
+        logging.error(f"Error during localization: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
@@ -164,8 +176,7 @@ if __name__ == '__main__':
     #         logging.StreamHandler(sys.stdout)     # 同时输出到控制台
     #     ]
     # )
-
-    logger = logging.getLogger(__name__)
+    # logger = logging.getLogger(__name__)
     app = create_app()
     app.run(host='0.0.0.0', port=5000, debug=False) 
     

@@ -73,28 +73,28 @@ def pairs_from_score_matrix(
     return pairs
 
 
-def spatial_filter(db_names, db_desc, last_pose, ref_poses_dir, spatial_radius):
-    start_time = time.time()
-    pose_list = []
-    valid_indices = []
-    for idx, name in enumerate(db_names):
-        pose_path = Path(ref_poses_dir) / f"{Path(name).stem}.txt"
-        pose = np.loadtxt(pose_path)
-        pose_list.append(pose[:3, 3])
-        valid_indices.append(idx)
-    if len(pose_list) == 0:
-        logging.info("空间过滤失效")
-        return db_names, db_desc
-    poses = np.stack(pose_list)  # shape: (N, 3)
-    dists = np.linalg.norm(poses - last_pose, axis=1)
-    keep_mask = dists <= spatial_radius
-    keep_indices = np.array(valid_indices)[keep_mask]
-    db_names_filtered = [db_names[i] for i in keep_indices]
-    db_desc_filtered = db_desc[keep_indices]
-    logging.info(f"空间过滤后剩余: {len(db_names_filtered)} 张参考图像")
-    end_time = time.time()
-    logging.info(f"空间过滤时间: {end_time - start_time:.4f} 秒")
-    return db_names_filtered, db_desc_filtered
+def spatial_filter(last_pose, ref_poses_tensor, spatial_radius, device):
+    """
+    db_names: list[str]
+    db_desc: torch.Tensor [N, D]
+    last_pose: np.ndarray or torch.Tensor [3,]
+    ref_poses_tensor: torch.Tensor [N, 3]
+    spatial_radius: float
+    device: str
+    return: numpy.ndarray [N,]
+    """
+    start = time.time()
+    last_pose = torch.from_numpy(last_pose).float().to(device)
+    ref_poses_tensor = ref_poses_tensor.to(device)
+    # 计算欧氏距离
+    dists = torch.norm(ref_poses_tensor - last_pose, dim=1)  # [N,]
+    invalid_tensor = dists > spatial_radius
+    valid_indices = torch.where(~invalid_tensor)[0]
+    invalid = invalid_tensor.cpu().numpy()
+    logging.info(f"空间过滤后剩余: {len(valid_indices)} 张参考图像")
+    end = time.time()
+    logging.info(f"空间过滤时间: {end - start} 秒")
+    return invalid
 
 
 def find_similar(
@@ -110,27 +110,25 @@ def find_similar(
     last_pose=None,
     spatial_radius=None,
     use_spatial_filtering=False,
-    ref_poses_dir=None,
+    ref_poses_tensor=None,
 ):
 
-    start_time = time.time()
     query_names_h5 = list_h5_names(query_descriptors)
     if len(db_names) == 0:
         logging.error("Could not find any database image.")
         raise ValueError("Could not find any database image.")
-    end_time = time.time()
-    start_time = time.time()
     query_names = parse_names(query_prefix, query_list, query_names_h5)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     query_desc = get_descriptors(query_names, query_descriptors)
+    # Avoid self-matching
+    self = np.array(query_names)[:, None] == np.array(db_names)[None]
     if use_spatial_filtering \
     and last_pose is not None and len(last_pose) > 0 \
     and spatial_radius is not None \
-    and ref_poses_dir is not None:
-        db_names, db_desc = spatial_filter(db_names, db_desc, last_pose, ref_poses_dir, spatial_radius)
+    and ref_poses_tensor is not None:
+        invalid_tensor = spatial_filter(last_pose, ref_poses_tensor, spatial_radius, device)
+        self = invalid_tensor | self
     sim = torch.einsum("id,jd->ij", query_desc.to(device), db_desc.to(device))
-    # Avoid self-matching
-    self = np.array(query_names)[:, None] == np.array(db_names)[None]
     pairs = pairs_from_score_matrix(sim, self, num_matched, min_score=similarity_threshold)  
     pairs = [(query_names[i], db_names[j]) for i, j in pairs]
     with open(output, "w") as f:

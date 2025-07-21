@@ -9,7 +9,7 @@ vpr:
   ref_descriptors_path: "data/outputs/ref.h5"
   query_descriptors_path: "data/outputs/query.h5"
   pairs_file_path: "data/outputs/pairs.txt"
-  use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
+  use_spatial_filtering: True   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
   history_file: "data/outputs/last_pose.txt" #上一次定位结果
@@ -17,7 +17,7 @@ vpr:
 
 # Pose Estimation settings
 pose:
-  method: "mast3r"  # Options: vggt, mast3r
+  method: "vggt"  # Options: vggt, mast3r
   use_depth_pre: False #是否使用深度预估
   depth_pre_model_path: "checkpoints/moge2_model.pt" #深度预估模型路径
   vggt:

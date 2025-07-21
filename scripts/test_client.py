@@ -24,9 +24,9 @@ def test_localization(base_url: str, image_path: str, depth_path: str):
         if depth_path and os.path.exists(depth_path):
             depth_file = open(depth_path, 'rb')
             files['depth'] = depth_file
-        
+        data = {'last_pose': json.dumps({'x': 0, 'y': 0, 'z': 0})}
         try:
-            response = requests.post(f"{base_url}/localize", files=files)
+            response = requests.post(f"{base_url}/localize", files=files, data=data)
         finally:
             # 确保depth文件被关闭
             if depth_file:
@@ -48,7 +48,7 @@ def main():
                        help='Path to test image')
     parser.add_argument('--depth', type=str, required=False,default=None,
                        help='Path to test image depth')
-    
+
     args = parser.parse_args()
     
     # Test health check

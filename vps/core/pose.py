@@ -95,12 +95,13 @@ class PoseEstimator:
             - Scale factor (if gt_depth provided, else 1.0)
         """
         # Preprocess images
-        #[ref1,ref2,ref3.....,query]
+        # [ref1,ref2,ref3.....,query]
         # 加载和预处理图像
+        image_paths = []
         query_img = Path(query_img)
+        image_paths.append(query_img)
         ref_imgs = generate_ref_list(query_img, self.config['pose']['vggt']['ref_dir'], self.config['vpr']['pairs_file_path'])
-        ref_imgs.append(query_img)
-        image_paths = ref_imgs
+        image_paths.extend(ref_imgs)
         logging.info(f"image数量: {len(image_paths)}")
         assert len(image_paths) >=2
         start_time = time.time()
@@ -113,8 +114,8 @@ class PoseEstimator:
         end_time = time.time()
         logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
-        P_query = np.concatenate([extrinsic[-1], np.array([[0, 0, 0, 1]])], axis=0)
-        P_ref = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)
+        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)
+        P_ref = np.concatenate([extrinsic[-1], np.array([[0, 0, 0, 1]])], axis=0)
         query2ref = P_ref @ np.linalg.inv(P_query)
 
         # 读取第一张ref图像的pose
