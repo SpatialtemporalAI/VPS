@@ -5,11 +5,12 @@ vpr:
   method: "megaloc"  # Options: netvlad, megaloc
   top_k: 3  # Number of similar images to retrieve
   output_dir: "data/outputs/"
+  check_ref: True #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
   ref_data_path: "data/ref"
   ref_descriptors_path: "data/outputs/ref.h5"
   query_descriptors_path: "data/outputs/query.h5"
   pairs_file_path: "data/outputs/pairs.txt"
-  use_spatial_filtering: True   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
+  use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
   history_file: "data/outputs/last_pose.txt" #上一次定位结果
@@ -17,7 +18,7 @@ vpr:
 
 # Pose Estimation settings
 pose:
-  method: "vggt"  # Options: vggt, mast3r
+  method: "pi3"  # Options: vggt, mast3r, pi3
   use_depth_pre: False #是否使用深度预估
   depth_pre_model_path: "checkpoints/moge2_model.pt" #深度预估模型路径
   vggt:
@@ -31,7 +32,10 @@ pose:
     batch_size: 1
     ref_dir: "data/ref"
     results_dir: "data/outputs/poses"
-
+  pi3:
+    model_path: "checkpoints/model.safetensors"
+    ref_dir: "data/ref"
+    results_dir: "data/outputs/poses"
   
 
 # System settings

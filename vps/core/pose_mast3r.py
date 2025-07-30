@@ -137,6 +137,6 @@ class PoseEstimatorMASt3R:
         result_path.parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(result_path, final_pose)
         np.savetxt(result_path.parent.parent/ f"last_pose.txt", final_pose)
-        
+        logging.info(f"mast3r_final_pose: {final_pose}")
         return final_pose
 

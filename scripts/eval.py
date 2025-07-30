@@ -114,9 +114,9 @@ with open(config_path, 'r') as f:
 # Initialize VPS
 vps = VisualPositioningSystem(config_path=config_path)
 start_time = time.time()
-query_dir = Path("/home/phw/visual-localization/VPS/data/query")
+query_dir = Path("/home/phw/visual-localization/VPS/outputs/frames727")
 for ext in ["*.jpg", "*.png"]:
-    for query_image in query_dir.glob(ext):
+    for query_image in sorted(query_dir.glob(ext)):
         a = query_image.stem
         query_depth = os.path.join(query_dir, f"{a}.npy")
         if os.path.exists(query_depth):
@@ -127,8 +127,8 @@ for ext in ["*.jpg", "*.png"]:
 end_time = time.time()
 print(f"Time taken: {end_time - start_time:.2f} seconds")
 result_dir = "/home/phw/visual-localization/VPS/data/outputs/poses"
-gt_dir = "/home/phw/newdisk1/VPS_data/7/pgt_7scenes_chess/test/poses"
-result_txt_path = "/home/phw/newdisk1/VPS_data/7/pgt_7scenes_chess/outputs/result.txt"
+gt_dir = "/home/phw/visual-localization/VPS/data/ref/poses"
+result_txt_path = "/home/phw/visual-localization/VPS/data/outputs/result.txt"
 evaluate(query_dir, result_dir, gt_dir, result_txt_path)
 
 

@@ -7,3 +7,6 @@
 [submodule "third_party/Hierarchical-Localization"]
 	path = third_party/Hierarchical-Localization
 	url = https://github.com/Benaidandan/Hierarchical-Localization.git
+[submodule "third_party/Pi3"]
+	path = third_party/Pi3
+	url = https://github.com/yyfz/Pi3.git

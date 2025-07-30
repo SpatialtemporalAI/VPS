@@ -101,7 +101,7 @@ def convert_poses_to_colmap(poses_dir, output_file, image_extension='.jpg'):
 if __name__ == '__main__':
     # --- 配置 ---
     poses_directory = Path("/home/phw/visual-localization/VPS/data/outputs/poses")  # poses文件夹路径
-    output_colmap_file = Path("/home/phw/visual-localization/VPS/data_0619/outputs/images_colmap.txt")  # 输出文件路径
+    output_colmap_file = Path("/home/phw/visual-localization/VPS/outputs/images_colmap.txt")  # 输出文件路径
     image_ext = '.jpg'  # 图像文件扩展名，根据你的实际情况修改（.jpg 或 .png）
     # ------------
     

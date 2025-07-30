@@ -49,6 +49,18 @@ class PoseEstimator:
         # Image preprocessing settings
         self.image_size = config['pose']['vggt']['image_size']
 
+    def backproject_depth(depth: np.ndarray, K: np.ndarray) -> np.ndarray:
+        """将深度图反投影为点云，形状 [N, 3]"""
+        H, W = depth.shape
+        u, v = np.meshgrid(np.arange(W), np.arange(H))
+        u = u.reshape(-1)
+        v = v.reshape(-1)
+        z = depth.reshape(-1)
+        x = (u - K[0, 2]) * z / K[0, 0]
+        y = (v - K[1, 2]) * z / K[1, 1]
+        pts = np.stack([x, y, z], axis=1)
+        valid = z > 0
+        return pts[valid]
 
     def run_VGGT(self, model, images, dtype, resolution=518):
     # images: [B, 3, H, W]
@@ -111,17 +123,20 @@ class PoseEstimator:
         
         # 运行VGGT获取相机参数和深度图
         extrinsic, intrinsic, depth_map, depth_conf = self.run_VGGT(self.model, images, self.dtype, 518)
+        # print(f"intrinsic: {intrinsic}")
         end_time = time.time()
         logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
         P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)
-        P_ref = np.concatenate([extrinsic[-1], np.array([[0, 0, 0, 1]])], axis=0)
+        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0)
         query2ref = P_ref @ np.linalg.inv(P_query)
 
         # 读取第一张ref图像的pose
         ref_img = Path(ref_imgs[0])
         ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4)
         
+
+
         scale_factor = 1.0
         if query_depth is not None:
             if Path(query_depth).exists():
@@ -149,5 +164,5 @@ class PoseEstimator:
         result_path.parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(result_path, final_pose)
         np.savetxt(result_path.parent.parent/ f"last_pose.txt", final_pose)
-
+        logging.info(f"vggt_final_pose: {final_pose}")
         return final_pose 

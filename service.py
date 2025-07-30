@@ -140,6 +140,8 @@ def localize():
         if 'last_pose' in request.form:
             last_pose_json = json.loads(request.form['last_pose'])
             last_pose = np.array([last_pose_json['x'], last_pose_json['y'], last_pose_json['z']])
+        if last_pose is not None:
+            logging.info(f"client set last_pose: {last_pose}")
         # 执行定位 (depth_path可能是None,last_pose可能是None)
         pose3d= vps.localize(query_image_path,depth_path, last_pose)
         

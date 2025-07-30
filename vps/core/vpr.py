@@ -51,8 +51,9 @@ class VisualPlaceRecognition:
         # Check if reference descriptors already exist
         self.ref_descriptors = Path(self.config['vpr']['ref_descriptors_path'])
         ref_images = Path(self.ref_data_path) / "rgb"
-        # Extract reference descriptors only if they don't exist
-        if not self.ref_descriptors.exists():
+        # Extract reference descriptors only if they don't exist or check_flag is True
+        check_flag = self.config['vpr'].get('check_ref', True)
+        if not self.ref_descriptors.exists() or check_flag:
             logging.info("Extracting reference descriptors...")
             self.extract_global_descriptors(ref_images, self.ref_descriptors)
         else:
