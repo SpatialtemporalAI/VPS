@@ -114,7 +114,7 @@ with open(config_path, 'r') as f:
 # Initialize VPS
 vps = VisualPositioningSystem(config_path=config_path)
 start_time = time.time()
-query_dir = Path("/home/phw/visual-localization/VPS/outputs/frames727")
+query_dir = Path("/home/phw/visual-localization/VPS/data/query")
 for ext in ["*.jpg", "*.png"]:
     for query_image in sorted(query_dir.glob(ext)):
         a = query_image.stem

@@ -36,7 +36,7 @@ class COLMAPToVPSConverter:
         # COLMAP paths
         self.images_dir = self.colmap_dir / "images"
         self.sparse_dir = self.colmap_dir / "sparse"
-        self.raw_depth_dir = self.colmap_dir / "depths"
+        self.raw_depth_dir = self.colmap_dir / "depth"
         self.cameras_txt = self.sparse_dir / "cameras.txt"
         self.images_txt = self.sparse_dir / "images.txt"
         # VPS output paths

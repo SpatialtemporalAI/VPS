@@ -13,7 +13,8 @@ from pi3.models.pi3 import Pi3
 from pi3.utils.basic import load_images_as_tensor # Assuming you have a helper function
 from pi3.utils.geometry import depth_edge
 from scipy.spatial.transform import Rotation as R
-from vps.utils.processing import compute_scale_factor, generate_ref_list, load_imagesPathList_as_tensor, umeyama_alignment
+from vps.utils.processing import compute_scale_factor, generate_ref_list, load_imagesPathList_as_tensor, umeyama_alignment, motion_averaging
+from vps.utils.motion_averaging import MotionAveraging
 from safetensors.torch import load_file
             
 
@@ -92,8 +93,8 @@ class PoseEstimatorPi3:
         # Compute relative pose
         P_query = results['camera_poses'][0][0].cpu().numpy()
         P_query = np.linalg.inv(P_query)
-        P_ref = results['camera_poses'][0][1].cpu().numpy()
-        P_ref = np.linalg.inv(P_ref)
+        P_refs = np.linalg.inv(results['camera_poses'][0][1:].cpu().numpy())
+        P_ref = P_refs[0]
 
         # # 读取第一张ref图像的pose
         ref_img = Path(ref_imgs[0])
@@ -125,6 +126,41 @@ class PoseEstimatorPi3:
         final_pose = ref_pose @ query2ref
         result_path = Path(self.config['pose']['pi3']['results_dir']) / f"{query_img.stem}.txt"
         result_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+
+
+
+
+
+
+        #############使用运动平均
+        # ma = MotionAveraging()
+        
+        # ref_poses = [np.loadtxt(Path(ref_img).parent.parent / "poses" / f"{Path(ref_img).stem}.txt").reshape(4, 4) for ref_img in ref_imgs]
+        # ref2query_poses = [np.linalg.inv(P_query) @ ref_pose for ref_pose in P_refs]
+        # q2r_poses = [np.linalg.inv(P_ref) @ P_query for P_ref in P_refs]
+        # for q2r_pose in q2r_poses:
+        #     q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3])
+        # q2r_poses = [q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3]) for q2r_pose in q2r_poses]
+        # query_pose_estimated, used_mask = motion_averaging(ref2query_poses, ref_poses)
+        # final_pose = query_pose_estimated
+        # ma.motion_averaging(ref_poses,q2r_poses)
+        # final_pose = ma.motion_averaging(ref_poses,q2r_poses)
+        #############使用运动平均
+
+
+
+
+
+
+
+
+
+
+
+
+
         np.savetxt(result_path, final_pose)
         np.savetxt(result_path.parent.parent/ f"last_pose.txt", final_pose)
         logging.info(f"pi3_final_pose: {final_pose}")
