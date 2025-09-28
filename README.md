@@ -20,7 +20,7 @@ A coarse-to-fine visual positioning system that combines the power of Hierarchic
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/SpatialtemporalAI/VPS.git
+git clone git@github.com:SpatialtemporalAI/VPS.git
 cd VPS
 ```
 
