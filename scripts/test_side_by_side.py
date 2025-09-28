@@ -8,9 +8,9 @@ from create_side_by_side_video import create_side_by_side_video
 
 def main():
     # 配置路径
-    folder_a = Path("outputs/rgb+depth")  # 左半边图像文件夹
-    folder_b = Path("/home/phw/visual-localization/PGSR/office-07-01/train/ours_15000/renders")  # 右半边图像文件夹
-    output_path = Path("outputs/side_by_side.mp4")  # 输出视频路径
+    folder_a = Path("data/frames")  # 左半边图像文件夹
+    folder_b = Path("/home/phw/visual-localization/PGSR/wanke/train/ours_15000/renders")  # 右半边图像文件夹
+    output_path = Path("outputs/wanke_side_by_side.mp4")  # 输出视频路径
     
     # 检查文件夹是否存在
     if not folder_a.exists():

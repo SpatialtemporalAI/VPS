@@ -3,10 +3,10 @@
 # Visual Place Recognition (VPR) settings
 vpr:
   method: "megaloc"  # Options: netvlad, megaloc
-  top_k: 3  # Number of similar images to retrieve
+  top_k: 10  # Number of similar images to retrieve
   output_dir: "data/outputs/"
   check_ref: False #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
-  ref_data_path: "data/ref"
+  ref_data_path: "data/train"
   ref_descriptors_path: "data/outputs/ref.h5"
   query_descriptors_path: "data/outputs/query.h5"
   pairs_file_path: "data/outputs/pairs.txt"
@@ -18,13 +18,13 @@ vpr:
 
 # Pose Estimation settings
 pose:
-  method: "pi3"  # Options: vggt, mast3r, pi3
-  use_depth_pre: True #是否使用深度预估
+  method: "mapanything"  # Options: vggt, mast3r, pi3
+  use_depth_pre: False #是否使用深度预估
   depth_pre_model_path: "checkpoints/moge2_model.pt" #深度预估模型路径
   vggt:
     model_path: "checkpoints/vggt_model.pt"  # If null, will download from HuggingFace
     image_size: 1024  # Input image size for VGGT
-    ref_dir: "data/ref"
+    ref_dir: "data/train"
     results_dir: "data/outputs/poses"
   mast3r:
     model_path: "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
@@ -34,7 +34,11 @@ pose:
     results_dir: "data/outputs/poses"
   pi3:
     model_path: "checkpoints/model.safetensors"
-    ref_dir: "data/ref"
+    ref_dir: "data/train"
+    results_dir: "data/outputs/poses"
+  mapanything:
+    model_path: "checkpoints/mapanything"
+    ref_dir: "data/train"
     results_dir: "data/outputs/poses"
   
 

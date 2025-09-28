@@ -1,13 +1,27 @@
 import numpy as np
 import torch
 import os
+from typing import Optional
 from scipy.spatial.transform import Rotation as R
+from .lud_localization import LUDLocalizer, convert_lines_to_lud_format
 # from pdb import set_trace as bb
 
 
 class MotionAveraging:
-    def __init__(self):
+    def __init__(self, use_lud=True, lud_loss_type="huber"):
         super(MotionAveraging, self).__init__()
+        self.use_lud = use_lud
+        self.lud_loss_type = lud_loss_type
+        
+        # 初始化LUD定位器
+        if self.use_lud:
+            self.lud_localizer = LUDLocalizer(
+                loss_type=lud_loss_type,
+                huber_delta=1.0,
+                max_iterations=1000,
+                tolerance=1e-6,
+                verbose=False
+            )
 
     def rotation_averaging(self, matrices): 
         """
@@ -165,6 +179,52 @@ class MotionAveraging:
         S_inv = torch.diag(1 / S)
         x = Vt.T @ (S_inv @ (U.T @ b))
         return x
+
+    def lud_camera_center_estimation(self, lines: np.ndarray, weights: Optional[np.ndarray] = None,
+                                   initial_guess: Optional[np.ndarray] = None, debug: bool = False) -> np.ndarray:
+        """
+        使用LUD算法进行鲁棒的相机中心估计
+        
+        Args:
+            lines: (N, 2, 3) 射线数据，每条射线由两个3D点定义
+            weights: (N,) 每条射线的权重
+            initial_guess: (3,) 初始位置猜测
+            debug: 是否输出调试信息
+            
+        Returns:
+            estimated_center: (3,) 估计的相机中心
+        """
+        if not self.use_lud:
+            # 如果未启用LUD，回退到传统方法
+            return self.camera_center_triangulation(lines)
+        
+        try:
+            # 转换数据格式
+            directions, reference_positions = convert_lines_to_lud_format(lines)
+            
+            # 使用LUD算法估计位置
+            if debug:
+                self.lud_localizer.verbose = True
+                
+            result = self.lud_localizer.estimate_location(
+                directions=directions,
+                reference_positions=reference_positions,
+                weights=weights,
+                initial_guess=initial_guess
+            )
+            
+            if debug:
+                print(f"LUD估计完成: method={result['method']}, cost={result['cost']:.6f}")
+                print(f"平均残差: {np.mean(result['residuals']):.6f}")
+                self.lud_localizer.verbose = False
+                
+            return result['position']
+            
+        except Exception as e:
+            if debug:
+                print(f"LUD估计失败，回退到传统方法: {e}")
+            # 如果LUD失败，回退到传统三角化
+            return self.camera_center_triangulation(lines)
 
     # def motion_averaging(self, poses_db, poses_q2d): 
     #     """
@@ -805,23 +865,74 @@ class MotionAveraging:
         return best_matrix
 
     def _enhanced_camera_center_triangulation(self, lines, filtered_indices, weights, pose_qualities, debug=False):
-        """增强的相机中心三角化，结合多种信息"""
+        """增强的相机中心三角化，结合多种信息和LUD算法"""
         if len(filtered_indices) == 0:
+            if self.use_lud:
+                return self.lud_camera_center_estimation(lines, weights, debug=debug)
+            else:
+                return self.camera_center_triangulation(lines)
+        
+        # 获取初始估计作为LUD的初始猜测
+        try:
+            initial_center = self._weighted_camera_center_triangulation(lines, filtered_indices, weights)
+        except:
+            initial_center = np.mean(lines[:, 0, :], axis=0)  # 简单平均作为备选
+        
+        candidates = []
+        
+        # 方法1: LUD鲁棒估计（主要方法）
+        if self.use_lud:
+            try:
+                # 使用过滤后的数据和权重
+                filtered_lines = lines[filtered_indices] if len(filtered_indices) > 0 else lines
+                filtered_weights = weights[filtered_indices] if len(filtered_indices) > 0 else weights
+                
+                lud_center = self.lud_camera_center_estimation(
+                    filtered_lines, 
+                    weights=filtered_weights,
+                    initial_guess=initial_center,
+                    debug=debug
+                )
+                candidates.append(lud_center)
+                
+                if debug:
+                    print(f"LUD估计位置: {lud_center}")
+                    
+            except Exception as e:
+                if debug:
+                    print(f"LUD方法失败: {e}")
+        
+        # 方法2: 基于旋转一致性的加权三角化（备选）
+        try:
+            center2 = self._weighted_camera_center_triangulation(lines, filtered_indices, weights)
+            candidates.append(center2)
+        except Exception as e:
+            if debug:
+                print(f"加权三角化失败: {e}")
+        
+        # 方法3: 基于pose质量的加权三角化
+        try:
+            quality_weights = pose_qualities / (np.sum(pose_qualities) + 1e-8)
+            center3 = self._quality_weighted_triangulation(lines, quality_weights)
+            candidates.append(center3)
+        except Exception as e:
+            if debug:
+                print(f"质量加权三角化失败: {e}")
+        
+        # 方法4: RANSAC鲁棒三角化（对于小样本使用较小的阈值）
+        try:
+            ransac_threshold = getattr(self, 'ransac_threshold', 0.1)
+            center4 = self._ransac_triangulation(lines, threshold=ransac_threshold, max_trials=min(100, len(lines) * 10))
+            candidates.append(center4)
+        except Exception as e:
+            if debug:
+                print(f"RANSAC三角化失败: {e}")
+        
+        # 如果没有有效候选，使用传统方法
+        if not candidates:
+            if debug:
+                print("所有方法都失败，使用传统三角化")
             return self.camera_center_triangulation(lines)
-        
-        # 方法1: 基于旋转一致性的加权三角化
-        center1 = self._weighted_camera_center_triangulation(lines, filtered_indices, weights)
-        
-        # 方法2: 基于pose质量的加权三角化
-        quality_weights = pose_qualities / (np.sum(pose_qualities) + 1e-8)
-        center2 = self._quality_weighted_triangulation(lines, quality_weights)
-        
-        # 方法3: RANSAC鲁棒三角化（对于小样本使用较小的阈值）
-        ransac_threshold = getattr(self, 'ransac_threshold', 0.1)
-        center3 = self._ransac_triangulation(lines, threshold=ransac_threshold, max_trials=min(100, len(lines) * 10))
-        
-        # 融合三种结果
-        candidates = [center1, center2, center3]
         
         # 选择最一致的结果
         best_center = self._select_best_center(candidates, lines, weights, debug=debug)
@@ -942,7 +1053,8 @@ class MotionAveraging:
         return best_center
 
     def set_small_sample_parameters(self, rotation_weight=0.5, quality_weight=0.3, stability_weight=0.2,
-                                  angle_threshold=0.2, huber_delta=0.3, ransac_threshold=0.1):
+                                  angle_threshold=0.2, huber_delta=0.3, ransac_threshold=0.1,
+                                  lud_loss_type=None, lud_huber_delta=None):
         """
         为小样本数据调整参数
         Args:
@@ -952,6 +1064,8 @@ class MotionAveraging:
             angle_threshold: 角度权重的标准差 (弧度)
             huber_delta: Huber损失的阈值 (弧度)
             ransac_threshold: RANSAC的内点阈值 (米)
+            lud_loss_type: LUD算法的损失函数类型 ("l1", "l2", "huber")
+            lud_huber_delta: LUD算法的Huber损失阈值
         """
         self.rotation_weight = rotation_weight
         self.quality_weight = quality_weight  
@@ -959,6 +1073,13 @@ class MotionAveraging:
         self.angle_threshold = angle_threshold
         self.huber_delta = huber_delta
         self.ransac_threshold = ransac_threshold
+        
+        # 更新LUD参数
+        if self.use_lud and hasattr(self, 'lud_localizer'):
+            if lud_loss_type is not None:
+                self.lud_localizer.loss_type = lud_loss_type
+            if lud_huber_delta is not None:
+                self.lud_localizer.huber_delta = lud_huber_delta
         
     def get_optimization_suggestions(self, n_pairs):
         """
@@ -980,6 +1101,12 @@ class MotionAveraging:
                 "- 如果结果不稳定，可以调整权重参数",
                 "- 考虑使用debug=True查看详细信息"
             ])
+            if self.use_lud:
+                suggestions.extend([
+                    "- LUD算法已启用，提供更好的鲁棒性",
+                    "- 可尝试不同的损失函数：'l1'(最鲁棒)、'huber'(平衡)、'l2'(最快)",
+                    "- 如有离群值，建议使用'l1'或调小'huber_delta'"
+                ])
         else:
             suggestions.extend([
                 "中等样本建议:",

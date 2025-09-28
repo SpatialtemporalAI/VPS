@@ -1,5 +1,4 @@
 from .vpr import VisualPlaceRecognition
-from .depth_pred import DepthPred
 import yaml
 from pathlib import Path
 from typing import Dict, Union, Optional
@@ -30,7 +29,7 @@ class VisualPositioningSystem:
         # Initialize pose estimator based on method
         pose_method = self.config['pose']['method']
         if pose_method == 'vggt':
-            from .pose import PoseEstimator
+            from .pose_vggt import PoseEstimator
             self.pose_estimator = PoseEstimator(self.config)
         elif pose_method == 'mast3r':
             from .pose_mast3r import PoseEstimatorMASt3R
@@ -38,10 +37,14 @@ class VisualPositioningSystem:
         elif pose_method == 'pi3':
             from .pose_pi3 import PoseEstimatorPi3
             self.pose_estimator = PoseEstimatorPi3(self.config)
+        elif pose_method == 'mapanything':
+            from .pose_mapanything import PoseEstimatorMapAnything
+            self.pose_estimator = PoseEstimatorMapAnything(self.config)
         else:
             raise ValueError(f"Unsupported pose method: {pose_method}")
         self.use_depth_pre = self.config['pose']['use_depth_pre']
         if self.use_depth_pre:
+            from .depth_pred import DepthPred
             self.depth_model = DepthPred(self.config)
 
     def _vpr_task(self, query_image, last_pose):
@@ -87,7 +90,7 @@ class VisualPositioningSystem:
                 depth_future = executor.submit(self._depth_task, query_image)
                 # 等待VPR完成
                 vpr_future.result()
-                # 等待深度预测完成（如果有）
+                # 等待深度预测完成(if)
                 depth_result = depth_future.result()
                 # 保存预测的深度到临时文件
                 depth_path = os.path.join(self.config['service']['temp_dir'], self.config['service']['temp_depth_name'])

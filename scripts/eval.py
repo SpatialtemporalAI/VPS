@@ -30,11 +30,11 @@ def translation_error(t1, t2):
 # 假设vps结果和gt都为4x4的txt
 def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
     thresholds = [
-        (1, 1),(3,3), (5, 5),(5,10),(5,15),(3,20),(3,30) ,(5, 10), (5, 15)
+        (1, 1),(3,3), (5, 5),(5,10),(5,15),(5,50),(3,30) ,(5, 10), (5, 15)
     ]
     # 失败指标：旋转误差大于5度或平移误差大于20cm
-    failure_r_thresh = 1000000000000000000
-    failure_t_thresh = 1000000000000000000
+    failure_r_thresh = 100000
+    failure_t_thresh = 100000000
 
     counts = [0] * len(thresholds)
     total = 0
@@ -67,7 +67,7 @@ def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
                 successful_r_errs.append(r_err)
                 successful_results.append(result_str)
                 for i, (r_th, t_th) in enumerate(thresholds):
-                    if r_err < r_th and best_terror < t_th:
+                    if r_err < r_th and t_err < t_th:
                         counts[i] += 1
             else:
                 failed_results.append(result_str)
@@ -114,7 +114,7 @@ with open(config_path, 'r') as f:
 # Initialize VPS
 vps = VisualPositioningSystem(config_path=config_path)
 start_time = time.time()
-query_dir = Path("/home/phw/visual-localization/VPS/data/query")
+query_dir = Path("/home/phw/visual-localization/VPS/data/test/rgb")
 for ext in ["*.jpg", "*.png"]:
     for query_image in sorted(query_dir.glob(ext)):
         a = query_image.stem
@@ -127,7 +127,7 @@ for ext in ["*.jpg", "*.png"]:
 end_time = time.time()
 print(f"Time taken: {end_time - start_time:.2f} seconds")
 result_dir = "/home/phw/visual-localization/VPS/data/outputs/poses"
-gt_dir = "/home/phw/visual-localization/VPS/data/ref/poses"
+gt_dir = "/home/phw/visual-localization/VPS/data/test/poses"
 result_txt_path = "/home/phw/visual-localization/VPS/data/outputs/result.txt"
 evaluate(query_dir, result_dir, gt_dir, result_txt_path)
 

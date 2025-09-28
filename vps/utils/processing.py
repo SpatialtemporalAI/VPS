@@ -89,7 +89,6 @@ def generate_ref_list(
             ref_render = Path(ref_dir) / "rgb_render" / ref_name
             if Path(ref_render).exists():
                 ref_list.append(str(ref_render))
-    
     return ref_list
 
 def compute_scale_factor( 
@@ -335,7 +334,7 @@ def _solve_position_least_squares(directions, ref_positions, weights=None):
     """
     用最小二乘法求解查询位置
     
-    每个约束：query_position = ref_position + scale * direction
+    每个约束:query_position = ref_position + scale * direction
     我们要同时求解query_position和各个scale
     
     Args:
@@ -532,7 +531,7 @@ def visualize_motion_averaging(ref_poses, ref2query_poses, query_pose_estimated,
         plt.show()
         
     except ImportError:
-        print("matplotlib未安装，无法进行可视化")
+        print("matplotlib未安装,无法进行可视化")
         return
         
     except Exception as e:

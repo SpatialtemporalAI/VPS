@@ -127,13 +127,13 @@ class PoseEstimator:
         end_time = time.time()
         logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
-        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)
-        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0)
+        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0) #w2c
+        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0) #w2c
         query2ref = P_ref @ np.linalg.inv(P_query)
 
         # 读取第一张ref图像的pose
         ref_img = Path(ref_imgs[0])
-        ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4)
+        ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4) #c2w
         
 
 

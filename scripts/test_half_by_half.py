@@ -8,9 +8,9 @@ from create_half_by_half_video import create_half_by_half_video
 
 def main():
     # 配置路径
-    folder_a = Path("outputs/frames724")  # 左下角图像文件夹
-    folder_b = Path("/home/phw/visual-localization/PGSR/office-07-01/train/ours_15000/renders")  # 右上角图像文件夹
-    output_path = Path("outputs/pi3_depthgt_724_ma.mp4")  # 输出视频路径
+    folder_a = Path("data/frames")  # 左下角图像文件夹
+    folder_b = Path("/home/phw/visual-localization/PGSR/wanke/train/ours_15000/renders")  # 右上角图像文件夹
+    output_path = Path("outputs/pi3_depthgt_wanke.mp4")  # 输出视频路径
     
     # 检查文件夹是否存在
     if not folder_a.exists():

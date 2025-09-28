@@ -28,7 +28,7 @@ cd VPS
 ```bash
 conda create -n vps python=3.10
 conda activate vps
-pip -r requirements.txt
+pip install -r requirements.txt
 ```
 
 3. Install dependencies:

@@ -4,27 +4,22 @@ from pathlib import Path
 from typing import Dict, Tuple, Union, Optional
 import cv2
 import json
-import logging
-import sys
+import os
 import time
-sys.path.append("third_party/Pi3")
-import torch
-from pi3.models.pi3 import Pi3
-from pi3.utils.basic import load_images_as_tensor # Assuming you have a helper function
-from pi3.utils.geometry import depth_edge
-from scipy.spatial.transform import Rotation as R
-from vps.utils.processing import compute_scale_factor, generate_ref_list, load_imagesPathList_as_tensor, umeyama_alignment, motion_averaging
+import logging
+import torch.nn.functional as F
+from vggt.models.vggt import VGGT
+from vggt.utils.load_fn import load_and_preprocess_images_square
+from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from ..utils.processing import compute_scale_factor, generate_ref_list
+from ..utils.find_similar import get_descriptors, parse_names
 from vps.utils.motion_averaging_raw import MotionAveraging
-from safetensors.torch import load_file
-            
-
-##pi3模型直接推理出的的pose是c2w
-class PoseEstimatorPi3:
-    """Pose estimation module using Pi3."""
+class PoseEstimator:
+    """Pose estimation module using VGGT."""
     
     def __init__(self, config: Dict):
         """
-        Initialize the Pi3 pose estimator.
+        Initialize the pose estimator.
         
         Args:
             config: Configuration dictionary containing pose estimation settings
@@ -32,25 +27,67 @@ class PoseEstimatorPi3:
         self.config = config
         self.device = torch.device(config['system']['device'])
         
-        # Initialize Pi3 model
+        # Set up dtype
+        if config['system']['dtype'] == 'float16':
+            self.dtype = torch.float16
+        elif config['system']['dtype'] == 'bfloat16':
+            self.dtype = torch.bfloat16
+        else:
+            self.dtype = torch.float32
+            
+        # Initialize VGGT model
+        self.model = VGGT()
+        model_path = config['pose']['vggt']['model_path']
+        if model_path:
+            self.model.load_state_dict(torch.load(model_path))
+        else:
+            _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
+            self.model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
+        
+        self.model.eval()
+        self.model = self.model.to(self.device)
+        
+        # Image preprocessing settings
+        self.image_size = config['pose']['vggt']['image_size']
 
-        self.model = Pi3().to(self.device).eval()
-        weight_path = config['pose']['pi3']['model_path']
-        weight = load_file(weight_path)
-        self.model.load_state_dict(weight)
+    def backproject_depth(depth: np.ndarray, K: np.ndarray) -> np.ndarray:
+        """将深度图反投影为点云，形状 [N, 3]"""
+        H, W = depth.shape
+        u, v = np.meshgrid(np.arange(W), np.arange(H))
+        u = u.reshape(-1)
+        v = v.reshape(-1)
+        z = depth.reshape(-1)
+        x = (u - K[0, 2]) * z / K[0, 0]
+        y = (v - K[1, 2]) * z / K[1, 1]
+        pts = np.stack([x, y, z], axis=1)
+        valid = z > 0
+        return pts[valid]
 
+    def run_VGGT(self, model, images, dtype, resolution=518):
+    # images: [B, 3, H, W]
+        assert len(images.shape) == 4
+        assert images.shape[1] == 3
 
+        # hard-coded to use 518 for VGGT
+        images = F.interpolate(images, size=(resolution, resolution), mode="bilinear", align_corners=False)
 
-    def run_Pi3(self, model, images_path):
-        imgs = load_imagesPathList_as_tensor(images_path).to(self.device)
-        # --- Inference ---
-        # Use mixed precision for better performance on compatible GPUs
-        dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
         with torch.no_grad():
-            with torch.amp.autocast('cuda', dtype=dtype):
-                res = model(imgs[None]) # Add batch dimension
-        # Access outputs: results['points'], results['camera_poses'] and results['local_points'].
-        return res
+            with torch.cuda.amp.autocast(dtype=dtype):
+                images = images[None]  # add batch dimension
+                aggregated_tokens_list, ps_idx = model.aggregator(images)
+
+            # Predict Cameras
+            pose_enc = model.camera_head(aggregated_tokens_list)[-1]
+            # Extrinsic and intrinsic matrices, following OpenCV convention (camera from world)
+            extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images.shape[-2:])
+            # Predict Depth Maps
+            depth_map, depth_conf = model.depth_head(aggregated_tokens_list, images, ps_idx)
+
+        extrinsic = extrinsic.squeeze(0).cpu().numpy()
+        intrinsic = intrinsic.squeeze(0).cpu().numpy()
+        depth_map = depth_map.squeeze(0).cpu().numpy()
+        depth_conf = depth_conf.squeeze(0).cpu().numpy()
+        return extrinsic, intrinsic, depth_map, depth_conf
     
     def estimate_pose(
         self, 
@@ -71,43 +108,42 @@ class PoseEstimatorPi3:
             - Scale factor (if gt_depth provided, else 1.0)
         """
         # Preprocess images
-        # [ref1,ref2,ref3.....,query]
+        # [query,ref1,ref2,ref3.....]
         # 加载和预处理图像
         image_paths = []
         query_img = Path(query_img)
         image_paths.append(query_img)
-        ref_imgs = generate_ref_list(query_img, self.config['pose']['pi3']['ref_dir'], self.config['vpr']['pairs_file_path'])
+        ref_imgs = generate_ref_list(query_img, self.config['pose']['vggt']['ref_dir'], self.config['vpr']['pairs_file_path'])
         image_paths.extend(ref_imgs)
         logging.info(f"image数量: {len(image_paths)}")
         assert len(image_paths) >=2
         start_time = time.time()
-        results = self.run_Pi3(self.model, image_paths)#results['points'], results['camera_poses'] and results['local_points'].
+        images, original_coords = load_and_preprocess_images_square(image_paths, self.image_size)
+        images = images.to(self.device)
+        original_coords = original_coords.to(original_coords.device)
+        
+        # 运行VGGT获取相机参数和深度图
+        extrinsic, intrinsic, depth_map, depth_conf = self.run_VGGT(self.model, images, self.dtype, 518)
+        # print(f"intrinsic: {intrinsic}")
         end_time = time.time()
-        logging.info(f"Pi3 运行时间: {end_time - start_time:.2f}s")
-        masks = torch.sigmoid(results['conf'][..., 0]) > 0.2
-        non_edge = ~depth_edge(results['local_points'][..., 2], rtol=0.03)
-        masks = torch.logical_and(masks, non_edge)[0]
-        query_mask = masks[0].cpu().numpy()
-        ref_mask = masks[1].cpu().numpy()
-        ###方案一 ：直接使用pi3的pose 用深度来恢复尺度
+        logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
-        Pred = results['camera_poses'][0].cpu().numpy() #c2w
-        P_query = Pred[0] #c2w
-        P_refs = Pred[1:] #c2w
-        P_ref = P_refs[0] #c2w
+        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0) #w2c
+        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0) #w2c
+        query2ref = P_ref @ np.linalg.inv(P_query)
 
-        # # 读取第一张ref图像的pose
+        # 读取第一张ref图像的pose
         ref_img = Path(ref_imgs[0])
-        ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4)
+        ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4) #c2w
 
         scale_factor = 1.0
         if query_depth is not None:
             if Path(query_depth).exists():
                 logging.info(f"query_depth 存在")
-                depth_map = torch.norm(results['local_points'][0][0], dim=-1).cpu().numpy()  # [H, W]
+                vggt_depth = depth_map[-1].squeeze()
                 query_depth = np.load(query_depth)
-                query_depth = cv2.resize(query_depth, (depth_map.shape[1], depth_map.shape[0]), interpolation=cv2.INTER_LINEAR)
-                scale_factor = compute_scale_factor(depth_map, query_depth,mask=query_mask)
+                query_depth = cv2.resize(query_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
+                scale_factor = compute_scale_factor(vggt_depth, query_depth)
         else:
             ref_depth = None
             if Path(ref_img.parent.parent/"depth"/f"{ref_img.stem}.npy").exists():
@@ -115,22 +151,18 @@ class PoseEstimatorPi3:
             if Path(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy").exists():
                 ref_depth = np.load(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy")
             if ref_depth is not None:
-                depth_map = torch.norm(results['local_points'][0][1], dim=-1).cpu().numpy()  # [H, W]
-                ref_depth = cv2.resize(ref_depth, (depth_map.shape[1], depth_map.shape[0]), interpolation=cv2.INTER_LINEAR)
-                scale_factor = compute_scale_factor(depth_map, ref_depth,mask=ref_mask)
-        if scale_factor is None:
-            logging.error(f"error : scale_factor: {scale_factor}")
-            scale_factor = 1.0
-        query2ref = np.linalg.inv(P_ref) @ P_query
+                vggt_depth = depth_map[0].squeeze()
+                ref_depth = cv2.resize(ref_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
+                scale_factor = compute_scale_factor(vggt_depth, ref_depth)
         query2ref[:3, 3] *= scale_factor
-        logging.info(f"scale_factor: {scale_factor}")
+        logging.info(f"scale_factor vggtpred vs gt: {scale_factor}")
         
-         # 初步计算最终的位姿
+         # 计算最终的位姿
         final_pose = ref_pose @ query2ref
-        result_path = Path(self.config['pose']['pi3']['results_dir']) / f"{query_img.stem}.txt"
+        result_path = Path(self.config['pose']['vggt']['results_dir']) / f"{query_img.stem}.txt"
         result_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 计算初步query结果与GT之间的误差
+
+         # 计算初步query结果与GT之间的误差
         logging.info("")
         logging.info("=== 初步Query结果 vs GT pose误差分析 ===")
         #查gt_pose
@@ -161,44 +193,38 @@ class PoseEstimatorPi3:
 
 
 
-
-
-
         #############使用运动平均
+        # P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0) #w2c
+        P_query = np.linalg.inv(np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)) #c2w
+        P_refs = []
+        extrinsic = extrinsic[1:] # 过滤query
+        for ext in extrinsic:
+            P_refs.append(np.linalg.inv(np.concatenate([ext, np.array([[0, 0, 0, 1]])], axis=0))) #c2w
         ma = MotionAveraging()
         ref_poses = [np.loadtxt(Path(ref_img).parent.parent / "poses" / f"{Path(ref_img).stem}.txt").reshape(4, 4) for ref_img in ref_imgs] #c2w
         q2r_poses = [np.linalg.inv(P_ref) @ P_query for P_ref in P_refs]
-        r2q_poses = [np.linalg.inv(P_query) @ P_ref for P_ref in P_refs]
+        # r2q_poses = [np.linalg.inv(P_query) @ P_ref for P_ref in P_refs]
         for q2r_pose in q2r_poses:
             q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3])
-        # query_pose_estimated, used_mask = motion_averaging(r2q_poses, ref_poses)
-        # final_pose = query_pose_estimated
-
-        # 可选：调整参数（如果默认效果不佳）
-        # ma.set_small_sample_parameters(
-        #     rotation_weight=0.4,    # 增加旋转一致性权重
-        #     quality_weight=0.4,     # pose质量权重
-        #     stability_weight=0.2,   # 几何稳定性权重
-        #     angle_threshold=0.15,   # 更严格的角度阈值
-        # )
-
-        # # 获取优化建议
-        # suggestions = ma.get_optimization_suggestions(10)
-        # print(suggestions)
-        
-        # 启用调试模式进行运动平均
-        # final_pose = ma.motion_averaging(ref_poses, q2r_poses, debug=True)
         final_pose = ma.motion_averaging(ref_poses, q2r_poses)
-        ###todo:
-        # ma优化的pose位移上的角度好了，但是scale似乎不太行  尝试用单目深度估计的scale来优化
-        # t = final_pose[:3,3]
-        # a = t/np.linalg.norm(t~)
-        # t_fix = scale_factor*a
-        # final_pose[:3,3] = t_fix
 
 
-    
-        
+
+
+
+
+        t_fix = np.linalg.norm((P_ref@final_pose)[:3,3])
+        t_pred = np.linalg.norm(query2ref[:3,3])
+        t_scale = t_fix / t_pred
+        print(t_scale)
+        scale_factor = scale_factor * t_scale
+        logging.info(f"scale_factor motion_averaging vs gt: {scale_factor}")
+
+
+
+
+
+
         # 计算GT的q2r相对位移和旋转
         q2r_gt_poses = []   
         for ref_pose in ref_poses:
@@ -221,7 +247,6 @@ class PoseEstimatorPi3:
             R_gt = q2r_gt[:3, :3]
             R_error = R_est @ R_gt.T
             rotation_angle_error = np.arccos(np.clip((np.trace(R_error) - 1) / 2, -1.0, 1.0)) * 180 / np.pi
-            
             logging.info(f"参考图像 {i}: 平移方向误差 = {translation_angle_error:.2f}°, 旋转误差 = {rotation_angle_error:.2f}°")
         logging.info("")
         logging.info("================================================")
@@ -277,10 +302,9 @@ class PoseEstimatorPi3:
         
         logging.info(f"平移误差 = {translation_error:.4f}m, 位移方向夹角 = {translation_angle_error:.2f}°, scale比例 = {scale_ratio:.4f}, 旋转误差 = {rotation_angle_error:.2f}°")
         
-        #############使用运动平均
+
 
         np.savetxt(result_path, final_pose)
         np.savetxt(result_path.parent.parent/ f"last_pose.txt", final_pose)
-        logging.info(f"pi3_final_pose: {final_pose}")
+        logging.info(f"vggt_final_pose: {final_pose}")
         return final_pose 
-
