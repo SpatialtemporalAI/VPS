@@ -4,14 +4,14 @@ A coarse-to-fine visual positioning system that combines the power of Hierarchic
 
 ## Features
 
-- Efficient visual place recognition using [MegaLoc](https://github.com/gmberton/MegaLoc) in [Hloc](https://github.com/cvg/Hierarchical-Localization)
+- Efficient visual place recognition using [MegaLoc](https://github.com/gmberton/MegaLoc)
 - Multiple pose estimation methods:
-  - accurate pose estimation
   - [VGGT](https://github.com/facebookresearch/vggt?tab=readme-ov-file)
-  - [MASt3R](https://github.com/naver/mast3r)
+  - [Pi3](https://github.com/yyfz/Pi3)
 - Scale recovery：
+  - use Motion Averaging(multi camera only)
   - use input ground truth depth by rgbd camera information 
-  - use [moge](https://github.com/microsoft/moge) to Monocular Depth Estimation  
+  - use [moge](https://github.com/microsoft/moge) to Monocular Depth   Estimation
   - use ref database depth and rgb
 - Easy-to-use pipeline for visual localization
 - Configurable pose estimation methods
@@ -20,7 +20,7 @@ A coarse-to-fine visual positioning system that combines the power of Hierarchic
 
 1. Clone the repository:
 ```bash
-git clone --recursive https://github.com/Benaidandan/VPS.git
+git clone https://github.com/SpatialtemporalAI/VPS.git
 cd VPS
 ```
 
@@ -28,62 +28,59 @@ cd VPS
 ```bash
 conda create -n vps python=3.10
 conda activate vps
-pip -r requirements.txt
+pip install scikit-image joblib flask
 ```
 
-3. Install dependencies:
+3. Install third_party dependencies:
 ```bash
-#vggt
-cd third_party/vggt
-# install pytorch 2.3.1 with cuda 12.1
+mkdir third_party && cd third_party
+
+#3.1 VGGT
+git clone https://github.com/facebookresearch/vggt.git
+cd vggt 
+#  pytorch with cuda
 pip install torch==2.3.1 torchvision==0.18.1 --index-url https://download.pytorch.org/whl/cu121
 pip install -e .
 cd ..
+
+#3.2 hloc
+git clone https://github.com/Benaidandan/Hierarchical-Localization.git
 cd Hierarchical-Localization/
 python -m pip install -e .
 cd ..
-#For MASt3R support, refer to https://github.com/naver/mast3r?tab=readme-ov-file#installation
-##
-cd mast3r
-pip install -r requirements.txt
-pip install -r dust3r/requirements.txt
-# Optional: you can also install additional packages to:
-# - add support for HEIC images
-# - add required packages for visloc.py
-pip install -r dust3r/requirements_optional.txt
-pip install cython
-pip install faiss-gpu
-git clone https://github.com/jenicek/asmk
-cd asmk/cython/
-cythonize *.pyx
+
+#3.3 (Optional) Pi3
+git clone https://github.com/yyfz/Pi3.git
+cd Pi3
+pip install -r requirements.txt #change torch with cuda
 cd ..
-pip install .  # or python3 setup.py build_ext --inplace
-cd ../../..
-## depth pred
+
+##3.4(Optional) depth pred
 pip install git+https://github.com/microsoft/MoGe.git
 
 ```
 4. (Optional) Download models
 ```bash
-mkdir checkpoints
-cd checkpoints
+mkdir checkpoints && cd checkpoints
+
 ```
-- [Ruicheng/moge-2-vits-normal](https://huggingface.co/Ruicheng/moge-2-vits-normal)
 - [vggt_1B](https://huggingface.co/facebook/VGGT-1B/blob/main/model.pt)
+- [Ruicheng/moge-2-vits-normal](https://huggingface.co/Ruicheng/moge-2-vits-normal)
+
 
 ## Usage
 ### Basic Usage
-- input: rgb + depth(可选)
-- ref数据库：rgb+pose(c2w) 相机到世界
+- input: rgb + depth(Optional)
+- ref database：rgb+pose(c2w) 
 - output:  
-  - 4x4 pose c2w(txt格式放到/data/outputs/pose下)
-  - 服务器返回json: {'theta': , 'x': , 'y': }
+  - 4x4 pose c2w(txt /data/outputs/pose)
+  - server json: {'theta': , 'x': , 'y': }
 
 ```bash
-#启动服务器
+#start server 
 python service.py 
-#模拟测试服务器
-#python scripts/test_client.py --url xxx --image xxx --depth xxx
+#test cilent
+python scripts/test_client.py --url xxx --image xxx --depth xxx
 ```
 
 ## Structure
@@ -92,10 +89,10 @@ python service.py
 VPS/
 ├── vps/                   # Main source code
 │   ├── core/              # Core modules
-│   │   ├── pose.py        # VGGT pose estimator
-│   │   ├── pose_mast3r.py # MASt3R pose estimator
+│   │   ├── pose_vggt.py   # VGGT pose estimator
+│   │   ├── pose_pi3.py    # Pi3 pose estimator
 │   │   ├── vpr.py         # Visual place recognition
-│   │   ├── depth_pred.py  # Depth pred （m）
+│   │   ├── depth_pred.py  # Depth pred（m）
 │   │   └── __init__.py    # Main VPS class
 │   ├── utils/             # tool
 ├── configs/               # Configuration files
@@ -122,7 +119,7 @@ VPS/
 │   │   ├── query.h5       #
 │   │   ├── ref.h5         #
 │   │   ├── result.txt     #eval
-│   │   ├── last_pose.txt  #last vps result（并没有节省时间）
+│   │   ├── last_pose.txt  #last vps result
 │   │
 │   ├── query/           #service.py和 scripts.py共用
 数据结构如上就行 与config中的default.yaml相对应即可

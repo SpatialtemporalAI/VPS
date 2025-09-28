@@ -2,6 +2,7 @@
 /outputs/
 /data/
 /log
+/third_party
 /vps.egg-info/
 __pycache__/
 *.txt
