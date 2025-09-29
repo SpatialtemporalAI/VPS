@@ -1,5 +1,4 @@
 from .vpr import VisualPlaceRecognition
-from .depth_pred import DepthPred
 import yaml
 from pathlib import Path
 from typing import Dict, Union, Optional
@@ -30,8 +29,8 @@ class VisualPositioningSystem:
         # Initialize pose estimator based on method
         pose_method = self.config['pose']['method']
         if pose_method == 'vggt':
-            from .pose import PoseEstimator
-            self.pose_estimator = PoseEstimator(self.config)
+            from .pose_vggt import PoseEstimatorVGGT
+            self.pose_estimator = PoseEstimatorVGGT(self.config)
         elif pose_method == 'mast3r':
             from .pose_mast3r import PoseEstimatorMASt3R
             self.pose_estimator = PoseEstimatorMASt3R(self.config)
@@ -42,6 +41,7 @@ class VisualPositioningSystem:
             raise ValueError(f"Unsupported pose method: {pose_method}")
         self.use_depth_pre = self.config['pose']['use_depth_pre']
         if self.use_depth_pre:
+            from .depth_pred import DepthPred
             self.depth_model = DepthPred(self.config)
 
     def _vpr_task(self, query_image, last_pose):

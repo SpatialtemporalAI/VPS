@@ -70,18 +70,18 @@ def transform_matrix_to_pose_2d(transform_matrix):
         # 'z': float(z)                   # 保留z值供参考
     }
 
-def map2map(x, y, theta):
-    scale = 1
-    R = np.array([[ -0.20886882 ,0.97588923 ],[ -0.97588923 ,-0.20886882]])
-    t = np.array([ 6.36628206, 9.91735557])
-    src_pos = np.array([x, y])
-    tgt_pos = scale * (R @ src_pos) + t
+# def map2map(x, y, theta):
+#     scale = 1
+#     R = np.array([[ -0.20886882 ,0.97588923 ],[ -0.97588923 ,-0.20886882]])
+#     t = np.array([ 6.36628206, 9.91735557])
+#     src_pos = np.array([x, y])
+#     tgt_pos = scale * (R @ src_pos) + t
 
-    dir_vec = np.array([np.cos(theta), np.sin(theta)])  
-    new_dir = R @ dir_vec
-    new_theta = np.arctan2(new_dir[1], new_dir[0])
+#     dir_vec = np.array([np.cos(theta), np.sin(theta)])  
+#     new_dir = R @ dir_vec
+#     new_theta = np.arctan2(new_dir[1], new_dir[0])
 
-    return tgt_pos[0], tgt_pos[1], new_theta
+#     return tgt_pos[0], tgt_pos[1], new_theta
 
 @app.route('/localize', methods=['POST'])
 def localize():
@@ -150,13 +150,13 @@ def localize():
             # 如果result包含pose字段且是4x4矩阵
             # 将4x4矩阵转换为x, y, theta格式
             pose_2d = transform_matrix_to_pose_2d(pose3d)
-            ans = map2map(x= pose_2d['x'], y= pose_2d['y'], theta= pose_2d['theta'])
-            # ans = pose_2d
-            ans = {
-                'x': ans[0],
-                'y': ans[1],
-                'theta': ans[2]
-            }
+            # ans = map2map(x= pose_2d['x'], y= pose_2d['y'], theta= pose_2d['theta'])
+            ans = pose_2d
+            # ans = {
+            #     'x': ans[0],
+            #     'y': ans[1],
+            #     'theta': ans[2]
+            # }
             logging.info(f"ans: {ans}")
             return jsonify(ans), 200
         else:
@@ -180,5 +180,5 @@ if __name__ == '__main__':
     # )
     # logger = logging.getLogger(__name__)
     app = create_app()
-    app.run(host='0.0.0.0', port=5000, debug=False) 
+    app.run(host='0.0.0.0', port=6000, debug=False) 
     

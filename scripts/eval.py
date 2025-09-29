@@ -67,7 +67,7 @@ def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
                 successful_r_errs.append(r_err)
                 successful_results.append(result_str)
                 for i, (r_th, t_th) in enumerate(thresholds):
-                    if r_err < r_th and best_terror < t_th:
+                    if r_err < r_th and t_err < t_th:
                         counts[i] += 1
             else:
                 failed_results.append(result_str)
@@ -114,7 +114,7 @@ with open(config_path, 'r') as f:
 # Initialize VPS
 vps = VisualPositioningSystem(config_path=config_path)
 start_time = time.time()
-query_dir = Path("/home/phw/visual-localization/VPS/data/query")
+query_dir = Path("/ssd1/phw/scene1/query/rgb")
 for ext in ["*.jpg", "*.png"]:
     for query_image in sorted(query_dir.glob(ext)):
         a = query_image.stem
@@ -126,9 +126,9 @@ for ext in ["*.jpg", "*.png"]:
         vps.localize(query_image,query_depth=query_depth)
 end_time = time.time()
 print(f"Time taken: {end_time - start_time:.2f} seconds")
-result_dir = "/home/phw/visual-localization/VPS/data/outputs/poses"
-gt_dir = "/home/phw/visual-localization/VPS/data/ref/poses"
-result_txt_path = "/home/phw/visual-localization/VPS/data/outputs/result.txt"
+result_dir = "/ssd1/phw/scene1/outputs/poses"
+gt_dir = "/ssd1/phw/scene1/query/poses"
+result_txt_path = "/ssd1/phw/scene1/outputs/result.txt"
 evaluate(query_dir, result_dir, gt_dir, result_txt_path)
 
 

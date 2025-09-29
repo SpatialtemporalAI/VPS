@@ -13,7 +13,9 @@ from vggt.utils.load_fn import load_and_preprocess_images_square
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from ..utils.processing import compute_scale_factor, generate_ref_list
 from ..utils.find_similar import get_descriptors, parse_names
-class PoseEstimator:
+from vps.utils.motion_averaging import MotionAveraging
+#VGGT模型输出camera是c2w
+class PoseEstimatorVGGT:  
     """Pose estimation module using VGGT."""
     
     def __init__(self, config: Dict):
@@ -32,7 +34,7 @@ class PoseEstimator:
         elif config['system']['dtype'] == 'bfloat16':
             self.dtype = torch.bfloat16
         else:
-            self.dtype = torch.float32
+            self.dtype = torch.bfloat16
             
         # Initialize VGGT model
         self.model = VGGT()
@@ -107,12 +109,12 @@ class PoseEstimator:
             - Scale factor (if gt_depth provided, else 1.0)
         """
         # Preprocess images
-        # [ref1,ref2,ref3.....,query]
+        # [query,ref1,ref2,ref3.....]
         # 加载和预处理图像
         image_paths = []
         query_img = Path(query_img)
         image_paths.append(query_img)
-        ref_imgs = generate_ref_list(query_img, self.config['pose']['vggt']['ref_dir'], self.config['vpr']['pairs_file_path'])
+        ref_imgs = generate_ref_list(query_img, self.config['vpr']['ref_data_path'], self.config['vpr']['pairs_file_path'])
         image_paths.extend(ref_imgs)
         logging.info(f"image数量: {len(image_paths)}")
         assert len(image_paths) >=2
@@ -127,39 +129,52 @@ class PoseEstimator:
         end_time = time.time()
         logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
-        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)
-        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0)
+        P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0) #w2c
+        P_ref = np.concatenate([extrinsic[1], np.array([[0, 0, 0, 1]])], axis=0) #w2c
         query2ref = P_ref @ np.linalg.inv(P_query)
-
-        # 读取第一张ref图像的pose
+        # 读取参考图像的pose
+        ref_poses_gt = [np.loadtxt(Path(ref_img).parent.parent / "poses" / f"{Path(ref_img).stem}.txt").reshape(4, 4) for ref_img in ref_imgs] #c2w
+        # 最相似的ref充当锚点
         ref_img = Path(ref_imgs[0])
-        ref_pose = np.loadtxt(ref_img.parent.parent / "poses" / f"{ref_img.stem}.txt").reshape(4, 4)
-        
 
 
         scale_factor = 1.0
-        if query_depth is not None:
-            if Path(query_depth).exists():
-                logging.info(f"query_depth 存在")
-                vggt_depth = depth_map[-1].squeeze()
-                query_depth = np.load(query_depth)
-                query_depth = cv2.resize(query_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
-                scale_factor = compute_scale_factor(vggt_depth, query_depth)
+        final_pose = None
+        if self.config['pose']['use_motion_average']:
+            P_query = np.linalg.inv(np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0)) #c2w
+            P_refs = []
+            extrinsic = extrinsic[1:] 
+            for ext in extrinsic:
+                P_refs.append(np.linalg.inv(np.concatenate([ext, np.array([[0, 0, 0, 1]])], axis=0))) #c2w
+            ma = MotionAveraging()
+            q2r_poses = [np.linalg.inv(P_ref) @ P_query for P_ref in P_refs]
+            # r2q_poses = [np.linalg.inv(P_query) @ P_ref for P_ref in P_refs]
+            for q2r_pose in q2r_poses:
+                q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3])
+            final_pose = ma.motion_averaging(ref_poses_gt, q2r_poses)
         else:
-            ref_depth = None
-            if Path(ref_img.parent.parent/"depth"/f"{ref_img.stem}.npy").exists():
-                ref_depth = np.load(ref_img.parent.parent / "depth" / f"{ref_img.stem}.npy")
-            if Path(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy").exists():
-                ref_depth = np.load(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy")
-            if ref_depth is not None:
-                vggt_depth = depth_map[0].squeeze()
-                ref_depth = cv2.resize(ref_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
-                scale_factor = compute_scale_factor(vggt_depth, ref_depth)
-        query2ref[:3, 3] *= scale_factor
-        logging.info(f"scale_factor: {scale_factor}")
-        
+            if query_depth is not None:
+                if Path(query_depth).exists():
+                    logging.info(f"query_depth 存在")
+                    vggt_depth = depth_map[-1].squeeze()
+                    query_depth = np.load(query_depth)
+                    query_depth = cv2.resize(query_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
+                    scale_factor = compute_scale_factor(vggt_depth, query_depth)
+            else:
+                ref_depth = None
+                if Path(ref_img.parent.parent/"depth"/f"{ref_img.stem}.npy").exists():
+                    ref_depth = np.load(ref_img.parent.parent / "depth" / f"{ref_img.stem}.npy")
+                if Path(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy").exists():
+                    ref_depth = np.load(ref_img.parent.parent / "depth_render" / f"{ref_img.stem}.npy")
+                if ref_depth is not None:
+                    vggt_depth = depth_map[0].squeeze()
+                    ref_depth = cv2.resize(ref_depth, (vggt_depth.shape[1], vggt_depth.shape[0]), interpolation=cv2.INTER_LINEAR)
+                    scale_factor = compute_scale_factor(vggt_depth, ref_depth)
+            query2ref[:3, 3] *= scale_factor
+            logging.info(f"depth pred scale_factor: {scale_factor}")
+            final_pose = ref_poses_gt[0] @ query2ref
+
          # 计算最终的位姿
-        final_pose = ref_pose @ query2ref
         result_path = Path(self.config['pose']['vggt']['results_dir']) / f"{query_img.stem}.txt"
         result_path.parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(result_path, final_pose)
