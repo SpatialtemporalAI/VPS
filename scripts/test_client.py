@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 import argparse
 import os
-
+import cv2
+import numpy as np
 
 def test_localization(base_url: str, image_path: str, depth_path: str):
     """Test the localization endpoint."""
@@ -34,7 +35,51 @@ def test_localization(base_url: str, image_path: str, depth_path: str):
         
         if response.status_code == 200:
             result = response.json()
-            print((f"result: {result}"))
+                        # 1. 处理姿态信息
+            received_pose = result.get('pose')
+
+            if received_pose and received_pose.get('x') is not None:
+                print("\n--- 姿态信息 (Pose) ---")
+                print(f"X: {received_pose['x']:.3f}")
+                print(f"Y: {received_pose['y']:.3f}")
+                print(f"Theta: {received_pose['theta']:.3f}")
+            else:
+                print("未接收到有效的姿态信息。")
+
+
+            # 2. 重构地图 (NumPy 数组)
+            map_data = result.get('map_data')
+            map_shape = result.get('map_shape')
+            map_dtype = result.get('map_dtype')
+
+            if map_data and map_shape and map_dtype:
+                print("\n--- 地图信息 (Map) ---")
+                try:
+                    # 将嵌套列表转换为 NumPy 数组
+                    # 注意：使用 tolist() 转换为列表后，数组的形状信息通常在列表中已经体现
+                    reconstructed_map = np.array(map_data, dtype=map_dtype)
+                    
+                    # 验证重构后的数组形状
+                    if list(reconstructed_map.shape) != map_shape:
+                        # 如果数组是从列表创建的，形状应该已经匹配，但保险起见可以检查
+                        # 如果数据不是标准的二维或三维，可能需要 reshape
+                        # reconstructed_map = reconstructed_map.reshape(map_shape) 
+                        pass
+                        
+                    print(f"✅ 地图重构成功！形状: {reconstructed_map.shape}, 类型: {reconstructed_map.dtype}")
+                    
+                    # 示例：显示地图的部分内容或统计信息
+                    print(f"地图像素值 Min/Max: {np.min(reconstructed_map)} / {np.max(reconstructed_map)}")
+                    
+                    # 接下来，您就可以像使用服务器上的 'map' 变量一样使用 'reconstructed_map' 了！
+                    # 例如：
+                    cv2.imwrite("Reconstructed.png", reconstructed_map)
+                    
+                except Exception as e:
+                    print(f"❌ 地图重构失败: {e}")
+                    print("请检查 map_data 是否为正确的嵌套列表格式。")
+            else:
+                print("未接收到完整的地图数据（缺少 map_data, map_shape, 或 map_dtype）。")
 
         else:
             print(f"✗ Localization failed: {response.status_code}")

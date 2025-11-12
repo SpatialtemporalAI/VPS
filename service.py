@@ -8,7 +8,7 @@ import cv2
 import sys
 import datetime
 import json
-
+import base64
 app = Flask(__name__)
 
 # Global VPS instance
@@ -24,7 +24,7 @@ def create_app(config_path: str = "configs/default.yaml"):
     
     return app
 
-def get_robot_to_camera_transform(offset_z: float = -0.1):
+def get_robot_to_camera_transform(offset_z: float = 0):
     """
     构造一个从机器人中心坐标系到相机坐标系的变换矩阵（只有平移，没有旋转）
     offset_z: 相机坐标系下机器人在Z轴方向上的偏移,默认 -0.2m
@@ -143,24 +143,36 @@ def localize():
         if last_pose is not None:
             logging.info(f"client set last_pose: {last_pose}")
         # 执行定位 (depth_path可能是None,last_pose可能是None)
-        pose3d= vps.localize(query_image_path,depth_path, last_pose)
-        
-        # Convert numpy arrays to lists for JSON serialization
+        pose3d,depth,map= vps.localize(query_image_path,depth_path, last_pose)
+        response_data = {} # 准备返回的数据字典
+        # 1. 处理姿态信息 (ans)
         if pose3d is not None:
-            # 如果result包含pose字段且是4x4矩阵
-            # 将4x4矩阵转换为x, y, theta格式
             pose_2d = transform_matrix_to_pose_2d(pose3d)
-            # ans = map2map(x= pose_2d['x'], y= pose_2d['y'], theta= pose_2d['theta'])
             ans = pose_2d
-            # ans = {
-            #     'x': ans[0],
-            #     'y': ans[1],
-            #     'theta': ans[2]
-            # }
+            response_data['pose'] = ans # 将姿态信息放入字典
             logging.info(f"ans: {ans}")
-            return jsonify(ans), 200
         else:
-            return jsonify({'error': 'No pose found'}), 400
+            response_data['pose'] = None
+            
+        # 2. 处理地图信息 (new_map)
+        if map is not None:
+            # 核心转换：使用 tolist() 将 NumPy 数组转换为嵌套的 Python 列表
+            if isinstance(map, np.ndarray):
+                response_data['map_data'] = map.tolist()
+                
+                # 补充元数据（可选，但推荐）
+                response_data['map_shape'] = map.shape 
+                response_data['map_dtype'] = str(map.dtype)
+                
+            else:
+                # new_map 不是 NumPy 数组的情况
+                response_data['map_data'] = None
+        else:
+            response_data['map_data'] = None
+
+    # 3. 返回 JSON 响应
+        return jsonify(response_data), 200
+    
     except Exception as e:
         logging.error(f"Error during localization: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -180,5 +192,5 @@ if __name__ == '__main__':
     # )
     # logger = logging.getLogger(__name__)
     app = create_app()
-    app.run(host='0.0.0.0', port=6000, debug=False) 
+    app.run(host='0.0.0.0', port=6001, debug=False) 
     

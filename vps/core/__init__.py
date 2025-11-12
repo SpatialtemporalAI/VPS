@@ -31,6 +31,9 @@ class VisualPositioningSystem:
         if pose_method == 'vggt':
             from .pose_vggt import PoseEstimatorVGGT
             self.pose_estimator = PoseEstimatorVGGT(self.config)
+        elif pose_method =='vggt_nav':
+            from.pose_vggt_fixdepth import PoseEstimator
+            self.pose_estimator = PoseEstimator(self.config)
         elif pose_method == 'mast3r':
             from .pose_mast3r import PoseEstimatorMASt3R
             self.pose_estimator = PoseEstimatorMASt3R(self.config)
@@ -103,9 +106,9 @@ class VisualPositioningSystem:
             logging.info(f"VPR time: {b - a} seconds")
         b = time.time()
         # 执行姿态估计
-        pose_answer = self.pose_estimator.estimate_pose(query_image, query_depth)
+        pose_answer,depth,new_map = self.pose_estimator.estimate_pose(query_image, query_depth)
         c = time.time()
         logging.info(f"Pose estimation time: {c - b} seconds")
         logging.info(f"VPS total time: {c - a} seconds")
-        return pose_answer
+        return pose_answer,depth,new_map
 

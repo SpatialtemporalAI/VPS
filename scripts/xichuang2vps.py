@@ -3,10 +3,10 @@ import json
 import numpy as np
 import shutil
 
-json_path = "/ssd1/phw/稀创扫描-后处理原数据/transforms.json"
-folder1 = "/ssd1/phw/稀创扫描-后处理原数据/undistort/left"
-folder2 = "/ssd1/phw/稀创扫描-后处理原数据/undistort/right"
-output_dir = "/ssd1/phw/xichuang/ref"
+json_path = "/ssd1/phw/xichuang1015/transforms.json"
+folder1 = "/ssd1/phw/xichuang1015/undistort/left"
+folder2 = "/ssd1/phw/xichuang1015/undistort/right"
+output_dir = "/ssd1/phw/xichuang1015/ref"
 
 rgb_dir = os.path.join(output_dir, "rgb")
 poses_dir = os.path.join(output_dir, "poses")
@@ -31,7 +31,7 @@ for idx, frame in enumerate(frames):
     ts = str(frame["timestamp"])
     found = False
     for folder in [folder1, folder2]:
-        img_path = os.path.join(folder, f"{ts}.png")
+        img_path = os.path.join(folder, f"{ts}.jpg")
         if os.path.exists(img_path):
             new_path = os.path.join(rgb_dir, f"{idx}.png")
             shutil.copy(img_path, new_path)

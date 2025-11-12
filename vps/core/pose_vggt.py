@@ -13,7 +13,7 @@ from vggt.utils.load_fn import load_and_preprocess_images_square
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from ..utils.processing import compute_scale_factor, generate_ref_list
 from ..utils.find_similar import get_descriptors, parse_names
-from vps.utils.motion_averaging import MotionAveraging
+from vps.utils.motion_averaging_raw import MotionAveraging
 #VGGT模型输出camera是c2w
 class PoseEstimatorVGGT:  
     """Pose estimation module using VGGT."""
