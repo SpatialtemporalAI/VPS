@@ -3,17 +3,17 @@
 # Visual Place Recognition (VPR) settings
 vpr:
   method: "megaloc"  # Options: netvlad, megaloc
-  top_k: 8  # Number of similar images to retrieve
-  output_dir: "/ssd1/phw/xichuang1015/outputs/"
+  top_k: 5  # Number of similar images to retrieve
+  output_dir: "/ssd1/phw/烯创-1120-后处理文件/outputs/"
   check_ref: False #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
-  ref_data_path: "/ssd1/phw/xichuang1015/ref"
-  ref_descriptors_path: "/ssd1/phw/xichuang1015/outputs/ref.h5"
-  query_descriptors_path: "/ssd1/phw/xichuang1015/outputs/query.h5"
-  pairs_file_path: "/ssd1/phw/xichuang1015/outputs/pairs.txt"
+  ref_data_path: "/ssd1/phw/烯创-1120-后处理文件/ref"
+  ref_descriptors_path: "/ssd1/phw/烯创-1120-后处理文件/outputs/ref.h5"
+  query_descriptors_path: "/ssd1/phw/烯创-1120-后处理文件/outputs/query.h5"
+  pairs_file_path: "/ssd1/phw/烯创-1120-后处理文件/outputs/pairs.txt"
   use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
-  history_file: "/ssd1/phw/xichuang1015/outputs/last_pose.txt" #上一次定位结果
+  history_file: "/ssd1/phw/烯创-1120-后处理文件/outputs/last_pose.txt" #上一次定位结果
   
 
 # Pose Estimation settings
@@ -26,7 +26,7 @@ pose:
     model_path: "/ssd1/phw/checkpoints/model.pt"  # If null, will download from HuggingFace
     image_size: 1024  # Input image size for VGGT
     image_resolution_size: 518
-    results_dir: "/ssd1/phw/xichuang1015/outputs/poses"
+    results_dir: "/ssd1/phw/烯创-1120-后处理文件/outputs/poses"
   mast3r:
     model_path: "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
     image_size: 512  # Input image size for MASt3R
@@ -61,7 +61,7 @@ service:
 depth_nav:  
   able: true #开启深度修复避障导航
   height_up: "z"   #or y 哪个坐标轴表示高度 朝上 
-  camera_real_h: 1.25 #相机实际高度（机器人相机距离地板高度）
+  camera_real_h: 1.1 #相机实际高度（机器人相机距离地板高度）
   map_path: "/home/panhewei/VPS/vps/nav/map.png"  #地图路径
   yaml_path: "/home/panhewei/VPS/vps/nav/map.yaml" #地图对应的ros yaml配置文件路径
   min_dist: 0.1

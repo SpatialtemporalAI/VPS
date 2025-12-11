@@ -176,37 +176,39 @@ def unproject_depth_map_to_point_cloud(depth_map, extrinsic_cam, intrinsic_cam, 
 
     return pts_world.astype(np.float32)
 
-# def rescale_camera(
-#    image_paths, original_coords,img_size, shift_point2d_to_original_res=False
-# ):
-#     # for pyimageid in reconstruction.images:
-#     #     # Reshaped the padded&resized image to the original size
-#     #     # Rename the images to the original names
-#     #     pyimage = reconstruction.images[pyimageid]
-#     #     pycamera = reconstruction.cameras[pyimage.camera_id]
-#     #     pyimage.name = image_paths[pyimageid - 1]
 
-#     #     if rescale_camera:
-#     #         # Rescale the camera parameters
-#     #         pred_params = copy.deepcopy(pycamera.params)
+def trans_point_cloud(point_map, extrinsic_cam, scale=1.0):
 
-#             real_image_size = original_coords[pyimageid - 1, -2:]
-#             resize_ratio = max(real_image_size) / img_size
-#             pred_params = pred_params * resize_ratio
-#             real_pp = real_image_size / 2
-#             pred_params[-2:] = real_pp  # center of the image
+    """
+    - point_map: H W 3
+    - extrinsic_cam: 4x4 transform camera -> world (C2W)
+    """
+    # --- 转 numpy ---
+    point = None
+    if isinstance(point_map, torch.Tensor):
+        point = point_map.detach().cpu().numpy()
+    else:
+         point = np.asarray(point_map)
+    if point.ndim == 3 and point.shape[2] == 3:
+        point = point.reshape(-1, 3)
+    elif point.ndim == 2 and point.shape[1] == 3:
+        pass
+    else:
+        raise ValueError("point must be (H,W,3) or (N,3)")
+    if isinstance(extrinsic_cam, torch.Tensor):
+        T = extrinsic_cam.detach().cpu().numpy()
+    else:
+        T = np.asarray(extrinsic_cam)
 
-#             pycamera.params = pred_params
-#             pycamera.width = real_image_size[0]
-#             pycamera.height = real_image_size[1]
+    if T.shape != (4, 4):
+        raise ValueError("extrinsic_cam must be 4x4 (camera->world)")
 
-#         if shift_point2d_to_original_res:
-#             # Also shift the point2D to original resolution
-#             top_left = original_coords[pyimageid - 1, :2]
+    valid_mask = np.isfinite(point).all(axis=1) & (np.linalg.norm(point, axis=1) > 0)
+    point = point[valid_mask]
+    point *= scale
+    R = T[:3, :3]
+    t = T[:3, 3]
 
-#             for point2D in pyimage.points2D:
-#                 point2D.xy = (point2D.xy - top_left) * resize_ratio
-
-
-#     return reconstruction
-
+    # ----------- camera -> world ----------
+    pts_world = (R @ point.T).T + t[None, :]
+    return pts_world.astype(np.float32)

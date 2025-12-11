@@ -9,7 +9,7 @@ import time
 import os
 from hloc import extract_features, extractors
 from hloc.utils.base_model import dynamic_load
-from vps.utils.find_similar import find_similar, parse_names, get_descriptors
+from vps.utils.find_similar import find_similar, parse_names, get_descriptors, find_similar_vpr_pose,find_similar_vpr_pose_kmeans
 from hloc.utils.io import list_h5_names
 import logging
 class VisualPlaceRecognition:
@@ -71,7 +71,7 @@ class VisualPlaceRecognition:
         ref_poses = []
         for name in self.db_names:
             pose = np.loadtxt(Path(ref_poses_dir) / f"{Path(name).stem}.txt").reshape(4,4)
-            ref_poses.append(pose[:3,3])
+            ref_poses.append(pose)
         self.ref_poses_tensor = torch.from_numpy(np.stack(ref_poses, 0)).float()
 
     def _load_pose_history(self):
@@ -152,19 +152,39 @@ class VisualPlaceRecognition:
             self.last_pose = last_pose
         self._delete_history_file()
         start_time = time.time()
-        find_similar(
-            query_descriptors=query_descriptors,
-            db_descriptors=self.ref_descriptors,
-            db_names=self.db_names,
-            db_desc=self.db_desc,
-            output=self.config['vpr']['pairs_file_path'],
-            num_matched=self.top_k,
-            similarity_threshold=self.similarity_threshold,
-            last_pose=self.last_pose,
-            spatial_radius=self.spatial_radius,
-            use_spatial_filtering=self.use_spatial_filtering,
-            ref_poses_tensor=self.ref_poses_tensor
-        )   
+        # find_similar(
+        #     query_descriptors=query_descriptors, #query 特征   Path
+        #     db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
+        #     db_names=self.db_names, #refs 名称 list
+        #     db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
+        #     output=self.config['vpr']['pairs_file_path'], # 输出文件路径
+        #     num_matched=self.top_k, # 匹配数量 int
+        #     similarity_threshold=self.similarity_threshold, # 相似度阈值 float
+        #     last_pose=self.last_pose, # 历史pose np.ndarray [3,]
+        #     spatial_radius=self.spatial_radius, # 空间搜索半径 float
+        #     use_spatial_filtering=self.use_spatial_filtering, # 是否开启空间过滤 bool
+        #     ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
+        # )
+        find_similar_vpr_pose(
+            query_name=Path(query_image).name,
+            query_descriptors=query_descriptors, #query 特征   Path
+            db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
+            db_names=self.db_names, #refs 名称 list
+            db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
+            output=self.config['vpr']['pairs_file_path'], # 输出文件路径
+            num_matched=self.top_k, # 匹配数量 int
+            ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
+            )   
+        # find_similar_vpr_pose_kmeans(
+        #     query_name=Path(query_image).name,
+        #     query_descriptors=query_descriptors, #query 特征   Path
+        #     db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
+        #     db_names=self.db_names, #refs 名称 list
+        #     db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
+        #     output=self.config['vpr']['pairs_file_path'], # 输出文件路径
+        #     num_matched=self.top_k, # 匹配数量 int
+        #     ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
+        #     )  
         end_time = time.time()
         logging.info(f"query_image: {Path(query_image).name} pairs_from_retrieval time: {end_time - start_time:.2f} seconds")
         

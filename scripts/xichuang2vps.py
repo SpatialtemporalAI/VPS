@@ -3,10 +3,10 @@ import json
 import numpy as np
 import shutil
 
-json_path = "/ssd1/phw/xichuang1015/transforms.json"
-folder1 = "/ssd1/phw/xichuang1015/undistort/left"
-folder2 = "/ssd1/phw/xichuang1015/undistort/right"
-output_dir = "/ssd1/phw/xichuang1015/ref"
+json_path = "/ssd1/phw/烯创-1120-后处理文件/transforms.json"
+folder1 = "/ssd1/phw/烯创-1120-后处理文件/undistort/left"
+folder2 = "/ssd1/phw/烯创-1120-后处理文件/undistort/right"
+output_dir = "/ssd1/phw/烯创-1120-后处理文件/ref"
 
 rgb_dir = os.path.join(output_dir, "rgb")
 poses_dir = os.path.join(output_dir, "poses")

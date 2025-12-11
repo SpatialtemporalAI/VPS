@@ -14,7 +14,7 @@ from vggt.models.vggt import VGGT
 from vggt.utils.load_fn import load_and_preprocess_images_square, load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from vggt.utils.geometry import unproject_depth_map_to_point_map
-from vps.utils.processing import compute_scale_factor, generate_ref_list, unproject_depth_map_to_point_cloud
+from vps.utils.processing import compute_scale_factor, generate_ref_list, unproject_depth_map_to_point_cloud, trans_point_cloud
 from vps.utils.find_similar import get_descriptors, parse_names
 from vps.utils.motion_averaging_raw import MotionAveraging
 from vps.nav.point2map import *
@@ -162,12 +162,15 @@ class PoseEstimator:
             extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images.shape[-2:])
             # Predict Depth Maps
             depth_map, depth_conf = model.depth_head(aggregated_tokens_list, images, ps_idx)
-
+            # Predict Point Maps
+            point_map, point_conf = model.point_head(aggregated_tokens_list, images, ps_idx)
         extrinsic = extrinsic.squeeze(0).cpu().numpy()
         intrinsic = intrinsic.squeeze(0).cpu().numpy()
         depth_map = depth_map.squeeze(0).cpu().numpy()
         depth_conf = depth_conf.squeeze(0).cpu().numpy()
-        return extrinsic, intrinsic, depth_map, depth_conf
+        point_map = point_map.squeeze(0).cpu().numpy()
+        point_conf = point_conf.squeeze(0).cpu().numpy()
+        return extrinsic, intrinsic, depth_map, depth_conf,point_map,point_conf
     
     def estimate_pose(
         self, 
@@ -200,7 +203,7 @@ class PoseEstimator:
         images, original_coords = load_and_preprocess_images_square(image_paths, self.image_load_size)
         images = images.to(self.device)
         # 运行VGGT获取相机参数和深度图
-        extrinsic, intrinsic, depth_map, depth_conf = self.run_VGGT(self.model, images, self.dtype, self.image_resolution_size)
+        extrinsic, intrinsic, depth_map, depth_conf, point_map, point_conf = self.run_VGGT(self.model, images, self.dtype, self.image_resolution_size)
         end_time = time.time()
         logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
         # Compute relative pose
@@ -221,16 +224,15 @@ class PoseEstimator:
             q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3])
         # 计算最终的位姿
         final_pose = ma.motion_averaging(ref_poses_gt, q2r_poses)
-
-        
-        # 计算最终的深度    
         final_depth = depth_map[0].squeeze()
-        # mask = self.generate_mask_from_coord(original_coord=original_coords[0],
-        #     load_size=self.image_load_size,target_size=self.image_resolution_size)
-        # rows, cols = np.where(mask)
-        # r_min, r_max = np.min(rows), np.max(rows)
-        # c_min, c_max = np.min(cols), np.max(cols)
-        # final_depth = final_depth[r_min : r_max + 1, c_min : c_max + 1]
+        final_point = point_map[0].squeeze()
+        mask = self.generate_mask_from_coord(original_coord=original_coords[0],
+            load_size=self.image_load_size,target_size=self.image_resolution_size)
+        rows, cols = np.where(mask)
+        r_min, r_max = np.min(rows), np.max(rows)
+        c_min, c_max = np.min(cols), np.max(cols)
+        final_depth = final_depth[r_min : r_max + 1, c_min : c_max + 1]
+        # final_point = final_point[r_min : r_max + 1, c_min : c_max + 1]
         # images = F.interpolate(images, size=(518, 518), mode="bilinear", align_corners=False)
         # image_tensor = images[0] 
         # # 2. 从 PyTorch 张量转换为 OpenCV/NumPy 格式
@@ -261,7 +263,8 @@ class PoseEstimator:
         logging.info(f"vggt_final_pose: {final_pose}")
         new_map = None
         if self.depth_nav == True:
-            pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose)
+            # pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose)
+            pcd = trans_point_cloud(final_point,extrinsic_cam=final_pose)
             if self.up == 'z': 
                 cam_pred_h = final_pose[2][3]#z-up
             else:
@@ -271,10 +274,12 @@ class PoseEstimator:
             logging.info(pred_floor_h)
             scale = get_height_scale(cam_pred_h,pred_floor_h,self.cam_real_h)
             logging.info(f"camera_floor scale is {scale}")
-            pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose,scale=scale)
+            # pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose,scale=scale)
+            pcd = trans_point_cloud(final_point,extrinsic_cam=final_pose,scale=scale)
+
             pred_floor_h = get_floor_height(pcd,cam_pred_h,up=self.up)
             obstacle_points, avalibale_points = segment_points_h(pcd,pred_floor_h,cam_pred_h,up=self.up)
-            
+
             if self.map_path.exists() and self.yaml_path.exists():
                 new_map = get_new_occupancy_map(
                     obs_points=obstacle_points,
@@ -284,7 +289,7 @@ class PoseEstimator:
                     camera_6dpose=final_pose,
                     min_dist=self.min_dist,
                     max_dist=self.max_dist,
-                    occupancy_min_points_per_cell=8,
+                    occupancy_min_points_per_cell=15,
                     up=self.up,
                     showself=False
                 )
@@ -297,9 +302,9 @@ class PoseEstimator:
                     f"YAML Path Exists: {self.yaml_path.exists()}"
                 )
 
-        # self.save_points_as_ply(pcd, "output.ply")
+        self.save_points_as_ply(pcd, "output.ply")
 
-        # cv2.imwrite('dawdawd.png',new_map)
+        cv2.imwrite('dawdawd.png',new_map)
         
         # np.save('a.npy',final_depth)
         # self.visualize_depth_map_colored_cv2(final_depth, 'colored_final_depth_cv2.png')

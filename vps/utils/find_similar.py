@@ -13,7 +13,7 @@ from hloc.utils.io import list_h5_names
 from hloc.utils.parsers import parse_image_lists
 from hloc.utils.read_write_model import read_images_binary
 import logging
-
+from sklearn.cluster import KMeans
 
 def parse_names(prefix, names, names_all):
     if prefix is not None:
@@ -66,7 +66,6 @@ def pairs_from_score_matrix(
     topk = torch.topk(scores, num_select, dim=1)
     indices = topk.indices.cpu().numpy()
     valid = topk.values.isfinite().cpu().numpy()
-
     pairs = []
     for i, j in zip(*np.where(valid)):
         pairs.append((i, indices[i, j]))
@@ -86,6 +85,7 @@ def spatial_filter(last_pose, ref_poses_tensor, spatial_radius, device):
     start = time.time()
     last_pose = torch.from_numpy(last_pose).float().to(device)
     ref_poses_tensor = ref_poses_tensor.to(device)
+    ref_poses_tensor = ref_poses_tensor[:3, 3]
     # 计算欧氏距离
     dists = torch.norm(ref_poses_tensor - last_pose, dim=1)  # [N,]
     invalid_tensor = dists > spatial_radius
@@ -122,16 +122,341 @@ def find_similar(
     query_desc = get_descriptors(query_names, query_descriptors)
     # Avoid self-matching
     self = np.array(query_names)[:, None] == np.array(db_names)[None]
-    if use_spatial_filtering \
-    and last_pose is not None and len(last_pose) > 0 \
-    and spatial_radius is not None \
-    and ref_poses_tensor is not None:
-        invalid_tensor = spatial_filter(last_pose, ref_poses_tensor, spatial_radius, device)
-        self = invalid_tensor | self
+    # if use_spatial_filtering \
+    # and last_pose is not None and len(last_pose) > 0 \
+    # and spatial_radius is not None \
+    # and ref_poses_tensor is not None:
+    #     invalid_tensor = spatial_filter(last_pose, ref_poses_tensor, spatial_radius, device)
+    #     self = invalid_tensor | self
     sim = torch.einsum("id,jd->ij", query_desc.to(device), db_desc.to(device))
     pairs = pairs_from_score_matrix(sim, self, num_matched, min_score=similarity_threshold)  
     pairs = [(query_names[i], db_names[j]) for i, j in pairs]
     with open(output, "w") as f:
         f.write("\n".join(" ".join([i, j]) for i, j in pairs))
+
+
+
+def find_similar_vpr_pose(
+    query_name,        #str query name
+    query_descriptors, #query 特征   Path
+    db_descriptors,    #refs 特征路径  list[path]
+    db_names,          #refs 名称 list
+    db_desc,           # db map {name: descriptor}  torch.Tensor [N, D]
+    output,
+    num_matched,
+    ref_poses_tensor,
+    query_prefix=None,
+    query_list=None,
+    # only a couple of knobs:
+    outlier_percentile=95,   # remove far-away poses among top-2k by this percentile
+    ang_weight=0.6,          # weight for angular term (radians)
+    pos_weight=0.2,          # weight for position term (meters)
+    sim_weight=0.2,          # weight to incorporate VPR similarity into final score (0..1)
+    verbose=False
+):
+    """
+    目的:纯vpr的相似度排序 图像可能过于类似,相机位置差异太小 不利于后续优化,尤其是k不是太大的时候
+        小k 找到更多更合理 分布更散的相机  让k=5 达到k = 10的效果????
+    Implements: top-2k by VPR -> seed (top1) -> remove pos outliers (percentile) ->
+                greedy pick by maximizing min(weighted pose distance) combined with sim.
+    Returns: selected_db_indices (list), selected_db_names (list), info dict
+    """
+
+    # top-N prefetch (N = min(2*k, M))
+    k = num_matched
+    N = 8*num_matched
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    query_desc = get_descriptors([query_name], query_descriptors)
+    # Avoid self-matching
+    self = np.array([query_name])[:, None] == np.array(db_names)[None]
+    sim = torch.einsum("id,jd->ij", query_desc.to(device), db_desc.to(device))
+    pairs = pairs_from_score_matrix(sim, self, N)
+    topN_idx = [int(j) for i,j in pairs]
+    topN_names = [db_names[i] for i in topN_idx]
+    topN_poses_tensor = ref_poses_tensor[topN_idx]
+    topN_poses = topN_poses_tensor.cpu().numpy()
+    topN_scores_tensor = sim[0][topN_idx]
+    topN_scores = topN_scores_tensor.cpu().numpy()
+    # print(f"topN_names: {topN_names}")
+    # print(f"topN_idx: {topN_idx}")
+    # print(f"topN_scores: {topN_scores}")
+    # print(f"topN_poses: {topN_poses}")
+
+    centers_all = topN_poses[:, :3, 3]
+    R_all = topN_poses[:, :3, :3]
+    z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    forwards_all = (R_all @ z.reshape(3,1)).squeeze(-1)
+    f_norm = np.linalg.norm(forwards_all, axis=1, keepdims=True) + 1e-12
+    forwards_all = forwards_all / f_norm
+    sims_all = topN_scores
+
+    # --- 2. 离群点剔除 (Outlier Removal) ---
+    # 目的：根据xyz pose 过滤明显的 VPR 匹配错误
+
+    median_pos = np.median(centers_all, axis=0)
+    dists_to_med = np.linalg.norm(centers_all - median_pos, axis=1)
+    cutoff = np.percentile(dists_to_med, outlier_percentile)
+    # 始终保留 Seed Top-1 (最相似的)，即使它可能偏离中位数（防止误杀）
+    keep_mask = (dists_to_med <= cutoff)
+    keep_mask[0] = True 
+    valid_local_indices = np.where(keep_mask)[0]
+
+    # 重新切片数据，只保留 valid candidates
+    cand_indices = valid_local_indices # 指向 topN_poses 的索引
+    cand_centers = centers_all[cand_indices]
+    cand_forwards = forwards_all[cand_indices]
+    cand_scores = sims_all[cand_indices]
+
+    cand_names = [db_names[topN_idx[i]] for i in cand_indices]
+    # print(f"cand_names: {cand_names}")
+    # print(f"cand_indices: {cand_indices}")
+    # print(f"cand_scores: {cand_scores}")
+    # --- 3. 贪心选择 (Greedy Selection for Diversity) ---
+    # 目标：选择 k 个，最大化 "min_dist_to_selected"
+    # 初始化：选择seed vpr分最高的
+    best_first_idx = np.argmax(cand_scores)
+    
+    selected_local_indices = [cand_indices[best_first_idx]] # 存的是 topN 列表里的下标
+    selected_mask = np.zeros(len(cand_indices), dtype=bool)
+    selected_mask[best_first_idx] = True
+    
+    # 归一化因子预计算
+    # 计算候选者包围盒大小，用于归一化距离，防止 pos_weight 难以调整
+    if len(cand_centers) > 1:
+        scene_scale = np.max(np.linalg.norm(cand_centers - np.mean(cand_centers, axis=0), axis=1)) * 2.0
+        scene_scale = max(scene_scale, 1.0) # 避免除零
+    else:
+        scene_scale = 1.0
+
+    def get_pose_distance(idx_a_local, idx_b_local):
+        # 输入是 cand_indices 的数组下标
+        pos_a, fwd_a = cand_centers[idx_a_local], cand_forwards[idx_a_local]
+        pos_b, fwd_b = cand_centers[idx_b_local], cand_forwards[idx_b_local]
+        
+        # 1. 位置距离 (Normalized)
+        dist_pos = np.linalg.norm(pos_a - pos_b) / scene_scale
+        
+        # 2. 角度距离 (Normalized 0~1)
+        # dot product clip to -1..1
+        dot = np.clip(np.dot(fwd_a, fwd_b), -1.0, 1.0)
+        dist_ang = np.arccos(dot) / np.pi
+        
+        return pos_weight * dist_pos + ang_weight * dist_ang
+    # 迭代选择直到满 k 个
+    while len(selected_local_indices) < k and len(selected_local_indices) < len(cand_indices):
+        best_candidate_idx = -1
+        best_score = -1e9
+        
+        # 遍历所有未选中的候选者
+        for i in range(len(cand_indices)):
+            if selected_mask[i]:
+                continue
+            
+            # Farthest Point Sampling 逻辑:
+            # 计算当前候选者 i 到 "已选集合" 中最近点的距离
+            # 我们希望这个 "最近距离" 越大越好 (离已选的越远越好)
+            min_dist_to_current_set = 1e9
+            dists = []
+            # 获取已选点的 indices (在 cand 数组中的下标)
+            curr_sel_indices = np.where(selected_mask)[0]
+            for sel_i in curr_sel_indices:
+                d = get_pose_distance(i, sel_i)
+                dists.append(d)
+            min_dist = min(dists)
+            
+            # 综合打分: 
+            # 距离分 (Geometry Diversity) + 相似度分 (Visual Reliability)
+            # cand_scores[i] 也是 normalized 或者原始值，建议归一化到 0~1 范围如果可能
+            # 这里的 sim_weight 是为了打破纯几何的 tie，或者避免选到 VPR 分数太低的点
+            score = min_dist + sim_weight * float(cand_scores[i])
+            
+            if score > best_score:
+                best_score = score
+                best_candidate_idx = i
+        
+        if best_candidate_idx != -1:
+            selected_mask[best_candidate_idx] = True
+            # 记录原始 TopN 中的索引，方便最后映射回全局
+            real_topn_idx = cand_indices[best_candidate_idx]
+            selected_local_indices.append(real_topn_idx)
+        else:
+            break
+    # --- 4. 最终输出 ---
+    selected_idx = [topN_idx[i] for i in selected_local_indices]
+    selected_names = [db_names[i] for i in selected_idx]
+    info = {
+        "topN_idx": topN_idx,
+        "kept_after_outlier": len(cand_indices),
+        "selected_globals": selected_idx
+    }
+    pairs = [(query_name, db_names[j]) for j in selected_idx]
+    # print(pairs)
+    with open(output, "w") as f:
+        f.write("\n".join(" ".join([i, j]) for i, j in pairs))
+    return selected_idx, selected_names, info
+
+def find_similar_vpr_pose_kmeans(
+    query_name,        # str query name
+    query_descriptors, # query 特征 Path
+    db_descriptors,    # refs 特征路径 list[path]
+    db_names,          # refs 名称 list
+    db_desc,           # db map {name: descriptor} torch.Tensor [N, D]
+    output,
+    num_matched,       # Target k
+    ref_poses_tensor,
+    query_prefix=None,
+    query_list=None,
+    # knobs:
+    outlier_percentile=95,   # 离群值剔除阈值
+    verbose=False
+):
+    """
+    [SOTA Strategy] K-Means Grouping Selection
+    Implements: Top-N VPR -> Outlier Removal -> Spatial Clustering (K-Means) -> Cluster-wise Best Score Selection.
+    
+    该方法通过将候选者在空间上聚类为 k 组，并在每组中选择 VPR 分数最高的图像，
+    从而在保证几何多样性（覆盖不同位置）的同时，最大化视觉匹配的可靠性。
+    """
+    print("kmeans")
+    # --- 1. Top-N Prefetch ---
+    k = num_matched
+    # 预取倍数：建议 N >= 3*k 到 5*k，给聚类留出足够的样本空间
+    N = 4*k
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    query_desc = get_descriptors([query_name], query_descriptors)
+    
+    # VPR Similarity Calculation
+    # Avoid self-matching logic (assuming db_names checks)
+    # ... (Keep your original logic here)
+    query_desc = get_descriptors([query_name], query_descriptors)
+    # Avoid self-matching
+    self = np.array([query_name])[:, None] == np.array(db_names)[None]
+    sim = torch.einsum("id,jd->ij", query_desc.to(device), db_desc.to(device))
+    pairs = pairs_from_score_matrix(sim, self, N)
+    topN_idx = [int(j) for i,j in pairs]
+    topN_names = [db_names[i] for i in topN_idx]
+    topN_poses_tensor = ref_poses_tensor[topN_idx]
+    topN_poses = topN_poses_tensor.cpu().numpy()
+    topN_scores_tensor = sim[0][topN_idx]
+    topN_scores = topN_scores_tensor.cpu().numpy()
+    
+
+    
+
+    # Extract Centers (XYZ)
+    centers_all = topN_poses[:, :3, 3]
+    sims_all = topN_scores
+
+    # --- 2. 离群点剔除 (Outlier Removal) ---
+    # 目的：根据物理距离剔除明显的 VPR 匹配错误（如重复纹理导致的远距离瞬移）
+    if len(centers_all) > 2:
+        median_pos = np.median(centers_all, axis=0)
+        dists_to_med = np.linalg.norm(centers_all - median_pos, axis=1)
+        cutoff = np.percentile(dists_to_med, outlier_percentile)
+        
+        # 始终保留 Top-1 (VPR最相似的)，即使它偏离中位数，防止误杀真值
+        keep_mask = (dists_to_med <= cutoff)
+        keep_mask[0] = True 
+        valid_local_indices = np.where(keep_mask)[0]
+    else:
+        valid_local_indices = np.arange(len(centers_all))
+
+    # 准备聚类数据
+    # cand_indices 是指向 topN 数组的下标
+    cand_indices = valid_local_indices 
+    cand_centers = centers_all[cand_indices]
+    cand_scores = sims_all[cand_indices]
+
+    if verbose:
+        print(f"[K-Means] Top-N: {len(centers_all)}, After Outlier Removal: {len(cand_centers)}")
+
+    # --- 3. K-Means 聚类选择 (Cluster & Pick Best) ---
+    selected_local_indices = [] # 存储选中的 cand_indices 中的值 (即 topN 的下标)
+
+    # 如果有效候选者不足 k 个，直接全选
+    if len(cand_centers) <= k:
+        selected_local_indices = cand_indices.tolist()
+    else:
+        # 3.1 运行 K-Means
+        # n_clusters = k
+        # n_init=10: 运行10次取最优，保证稳定性
+        try:
+            print("kmeans fit")
+            kmeans = KMeans(n_clusters=k, n_init=10, random_state=42)
+            labels = kmeans.fit_predict(cand_centers)
+            print("dawdawd")
+            # 3.2 在每个 Cluster 中选择 Score 最高的
+            for cluster_id in range(k):
+                # 找到属于该簇的所有点
+                cluster_mask = (labels == cluster_id)
+                
+                if not np.any(cluster_mask):
+                    continue
+                
+                # 获取该簇成员在 cand_centers 中的下标
+                member_indices_in_cand = np.where(cluster_mask)[0]
+                
+                # 获取这些成员的 VPR Scores
+                member_scores = cand_scores[member_indices_in_cand]
+                
+                # 找到簇内分数最高的那个点的下标
+                best_in_cluster_loc = np.argmax(member_scores)
+                best_idx_in_cand = member_indices_in_cand[best_in_cluster_loc]
+                
+                # 记录对应的 topN 下标
+                selected_local_indices.append(cand_indices[best_idx_in_cand])
+                
+        except Exception as e:
+            if verbose: print(f"[K-Means Error] Fallback to Top-K. Reason: {e}")
+            # Fallback: 直接选分数最高的 k 个
+            top_k_local = np.argsort(-cand_scores)[:k]
+            selected_local_indices = [cand_indices[i] for i in top_k_local]
+
+    # --- 4. 补齐逻辑 (Gap Filling) ---
+    # 极其罕见的情况：K-Means 产生的簇少于 k (空簇) 或者 初始候选不足
+    # 策略：从剩余未选中的候选者中，按 VPR 分数从高到低补齐
+    if len(selected_local_indices) < k:
+        current_set = set(selected_local_indices)
+        # 对剩余所有点按分数排序
+        remaining_sorted = sorted(
+            cand_indices, 
+            key=lambda idx: -sims_all[idx] # 使用全局 scores 数组
+        )
+        
+        for idx in remaining_sorted:
+            if len(selected_local_indices) >= k:
+                break
+            if idx not in current_set:
+                selected_local_indices.append(idx)
+                current_set.add(idx)
+
+    # --- 5. 最终输出转换 ---
+    # 将 topN 下标转换为全局 DB 下标
+    selected_globals = [topN_idx[i] for i in selected_local_indices]
+    
+    # 按照 VPR 分数重新降序排列 (可选，通常下游任务喜欢有序的)
+    # 获取选定项的 scores
+    final_scores = [sims_all[i] for i in selected_local_indices]
+    #以此排序
+    sorted_pairs = sorted(zip(selected_globals, final_scores), key=lambda x: -x[1])
+    selected_globals = [p[0] for p in sorted_pairs]
+    
+    selected_names = [db_names[i] for i in selected_globals]
+
+    info = {
+        "topN_idx": topN_idx,
+        "kept_after_outlier": len(cand_centers),
+        "selected_globals": selected_globals,
+        "method": "kmeans_clustering"
+    }
+
+    pairs = [(query_name, name) for name in selected_names]
+    if output:
+        with open(output, "w") as f:
+            f.write("\n".join(" ".join([i, j]) for i, j in pairs))
+            
+    return selected_globals, selected_names, info
+
 
 

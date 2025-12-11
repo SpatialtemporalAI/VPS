@@ -251,7 +251,7 @@ class MotionAveraging:
 
     def _get_filtered_indices(self, quaternions):
         """获取过滤后的索引"""
-        if len(quaternions) <= 3:
+        if len(quaternions) <= 5:
             return list(range(len(quaternions)))
         
         # 计算每个四元数的平均角距离
