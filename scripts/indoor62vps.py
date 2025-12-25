@@ -4,16 +4,16 @@ from pathlib import Path
 
 ###原始pose是w2c的  需求逆
 # ============ 配置路径 ============
-source_dir = Path("/ssd1/phw/scene1/images")
-ref_split = Path("/ssd1/phw/scene1/scene1_train.txt")
-test_split = Path("/ssd1/phw/scene1/scene1_test.txt")
+source_dir = Path("/ssd1/phw/indoor6/scene5/images")
+ref_split = Path("/ssd1/phw/indoor6/scene5/scene5_train.txt")
+test_split = Path("/ssd1/phw/indoor6/scene5/scene5_test.txt")
 
-ref_image_dir = Path("/ssd1/phw/scene1/ref/rgb") 
-ref_pose_dir = Path("/ssd1/phw/scene1/ref/poses")   
-query_image_dir = Path("/ssd1/phw/scene1/query/rgb")
-query_pose_dir = Path("/ssd1/phw/scene1/query/poses")
-ref_calibration_dir = Path("/ssd1/phw/scene1/ref/calibration")
-query_calibration_dir = Path("/ssd1/phw/scene1/query/calibration")
+ref_image_dir = Path("/ssd1/phw/indoor6/scene5/train/rgb") 
+ref_pose_dir = Path("/ssd1/phw/indoor6/scene5/train/poses")   
+query_image_dir = Path("/ssd1/phw/indoor6/scene5/test/rgb")
+query_pose_dir = Path("/ssd1/phw/indoor6/scene5/test/poses")
+ref_calibration_dir = Path("/ssd1/phw/indoor6/scene5/train/calibration")
+query_calibration_dir = Path("/ssd1/phw/indoor6/scene5/test/calibration")
 
 # 创建目标目录
 for d in [ref_image_dir, ref_pose_dir, query_image_dir, query_pose_dir,

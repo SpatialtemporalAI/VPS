@@ -26,99 +26,99 @@ class MotionAveraging:
         return avg_rotation_matrix
 
 
-    def rotation_averaging_enhanced(self, matrices):
-        """
-        两阶段旋转平均化：先筛除离群值，再基于一致性加权优化
+    # def rotation_averaging_enhanced(self, matrices):
+    #     """
+    #     两阶段旋转平均化：先筛除离群值，再基于一致性加权优化
         
-        Args:
-            matrices (np.ndarray): shape of (N, 3, 3), absolute rotation matrices 
-        Returns:
-            avg_rotation_matrix (np.ndarray): shape of (3, 3), absolute rotation matrix
-        """
-        quaternions = [R.from_matrix(mat).as_quat() for mat in matrices]
-        quaternions = np.array(quaternions)
+    #     Args:
+    #         matrices (np.ndarray): shape of (N, 3, 3), absolute rotation matrices 
+    #     Returns:
+    #         avg_rotation_matrix (np.ndarray): shape of (3, 3), absolute rotation matrix
+    #     """
+    #     quaternions = [R.from_matrix(mat).as_quat() for mat in matrices]
+    #     quaternions = np.array(quaternions)
         
-        # 第一阶段：筛除离群值
-        filtered_quats = self._remove_outliers_stage1(quaternions)
+    #     # 第一阶段：筛除离群值
+    #     filtered_quats = self._remove_outliers_stage1(quaternions)
         
-        # 第二阶段：基于一致性加权优化
-        final_result = self._weighted_averaging_stage2(quaternions, filtered_quats)
+    #     # 第二阶段：基于一致性加权优化
+    #     final_result = self._weighted_averaging_stage2(quaternions, filtered_quats)
         
-        return final_result
+    #     return final_result
 
-    def _remove_outliers_stage1(self, quaternions):
-        """第一阶段：移除角度偏差最大的离群值"""
-        if len(quaternions) <= 3:
-            return quaternions  # 太少的话直接返回
+    # def _remove_outliers_stage1(self, quaternions):
+    #     """第一阶段：移除角度偏差最大的离群值"""
+    #     if len(quaternions) <= 10:
+    #         return quaternions  # 太少的话直接返回
         
-        # 计算每个四元数到其他所有四元数的平均角距离
-        distances = []
-        for i, quat_i in enumerate(quaternions):
-            total_angle = 0
-            count = 0
-            for j, quat_j in enumerate(quaternions):
-                if i != j:
-                    # 计算四元数之间的角距离
-                    dot_product = np.abs(np.dot(quat_i, quat_j))
-                    angle_dist = 2 * np.arccos(np.clip(dot_product, -1, 1))
-                    total_angle += angle_dist
-                    count += 1
-            avg_angle = total_angle / count
-            distances.append(avg_angle)
+    #     # 计算每个四元数到其他所有四元数的平均角距离
+    #     distances = []
+    #     for i, quat_i in enumerate(quaternions):
+    #         total_angle = 0
+    #         count = 0
+    #         for j, quat_j in enumerate(quaternions):
+    #             if i != j:
+    #                 # 计算四元数之间的角距离
+    #                 dot_product = np.abs(np.dot(quat_i, quat_j))
+    #                 angle_dist = 2 * np.arccos(np.clip(dot_product, -1, 1))
+    #                 total_angle += angle_dist
+    #                 count += 1
+    #         avg_angle = total_angle / count
+    #         distances.append(avg_angle)
         
-        # 移除平均角度最大的1-2个（根据数据量决定）
-        remove_count = min(2, len(quaternions) // 3)  # 最多移除1/3
-        if remove_count > 0:
-            # 找到距离最大的几个索引
-            worst_indices = np.argsort(distances)[-remove_count:]
-            # 保留其他索引
-            good_indices = [i for i in range(len(quaternions)) if i not in worst_indices]
-            return quaternions[good_indices]
+    #     # 移除平均角度最大的1-2个（根据数据量决定）
+    #     remove_count = min(2, len(quaternions) // 3)  # 最多移除1/3
+    #     if remove_count > 0:
+    #         # 找到距离最大的几个索引
+    #         worst_indices = np.argsort(distances)[-remove_count:]
+    #         # 保留其他索引
+    #         good_indices = [i for i in range(len(quaternions)) if i not in worst_indices]
+    #         return quaternions[good_indices]
         
-        return quaternions
+    #     return quaternions
 
-    def _weighted_averaging_stage2(self, all_quats, filtered_quats):
-        """第二阶段：基于一致性计算权重并加权平均"""
-        # 使用第一阶段的结果作为参考
-        if len(filtered_quats) > 0:
-            reference_quat = np.mean(filtered_quats, axis=0)
-            # reference_quat = np.median(filtered_quats, axis=0)
-            reference_quat /= np.linalg.norm(reference_quat)
-        else:
-            # 如果没有过滤结果，使用所有四元数的中位数
-            reference_quat = np.median(all_quats, axis=0)
-            reference_quat /= np.linalg.norm(reference_quat)
+    # def _weighted_averaging_stage2(self, all_quats, filtered_quats):
+    #     """第二阶段：基于一致性计算权重并加权平均"""
+    #     # 使用第一阶段的结果作为参考
+    #     if len(filtered_quats) > 0:
+    #         reference_quat = np.mean(filtered_quats, axis=0)
+    #         # reference_quat = np.median(filtered_quats, axis=0)
+    #         reference_quat /= np.linalg.norm(reference_quat)
+    #     else:
+    #         # 如果没有过滤结果，使用所有四元数的中位数
+    #         reference_quat = np.median(all_quats, axis=0)
+    #         reference_quat /= np.linalg.norm(reference_quat)
         
-        # 计算每个四元数到参考四元数的权重
-        weights = []
-        for quat in all_quats:
-            # 确保四元数方向一致
-            if np.dot(reference_quat, quat) < 0:
-                quat = -quat
+    #     # 计算每个四元数到参考四元数的权重
+    #     weights = []
+    #     for quat in all_quats:
+    #         # 确保四元数方向一致
+    #         if np.dot(reference_quat, quat) < 0:
+    #             quat = -quat
             
-            # 计算角距离
-            dot_product = np.abs(np.dot(reference_quat, quat))
-            angle_dist = 2 * np.arccos(np.clip(dot_product, -1, 1))
+    #         # 计算角距离
+    #         dot_product = np.abs(np.dot(reference_quat, quat))
+    #         angle_dist = 2 * np.arccos(np.clip(dot_product, -1, 1))
             
-            # 权重：角度越小，权重越大（使用高斯权重）
-            weight = np.exp(-angle_dist / 0.3)  # 0.3是控制参数，可调整
-            weights.append(weight)
+    #         # 权重：角度越小，权重越大（使用高斯权重）
+    #         weight = np.exp(-angle_dist / 0.3)  # 0.3是控制参数，可调整
+    #         weights.append(weight)
         
-        # 归一化权重
-        weights = np.array(weights)
-        weights /= np.sum(weights)
+    #     # 归一化权重
+    #     weights = np.array(weights)
+    #     weights /= np.sum(weights)
         
-        # 加权平均
-        weighted_quat = np.zeros(4)
-        for quat, weight in zip(all_quats, weights):
-            # 再次确保方向一致
-            if np.dot(reference_quat, quat) < 0:
-                quat = -quat
-            weighted_quat += weight * quat
+    #     # 加权平均
+    #     weighted_quat = np.zeros(4)
+    #     for quat, weight in zip(all_quats, weights):
+    #         # 再次确保方向一致
+    #         if np.dot(reference_quat, quat) < 0:
+    #             quat = -quat
+    #         weighted_quat += weight * quat
         
-        # 归一化最终结果
-        weighted_quat /= np.linalg.norm(weighted_quat)
-        return R.from_quat(weighted_quat).as_matrix()
+    #     # 归一化最终结果
+    #     weighted_quat /= np.linalg.norm(weighted_quat)
+    #     return R.from_quat(weighted_quat).as_matrix()
 
     def camera_center_triangulation(self, points):  
         """
@@ -251,7 +251,7 @@ class MotionAveraging:
 
     def _get_filtered_indices(self, quaternions):
         """获取过滤后的索引"""
-        if len(quaternions) <= 5:
+        if len(quaternions) <= 10:
             return list(range(len(quaternions)))
         
         # 计算每个四元数的平均角距离

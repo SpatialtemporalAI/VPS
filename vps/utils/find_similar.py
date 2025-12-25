@@ -144,6 +144,7 @@ def find_similar_vpr_pose(
     db_desc,           # db map {name: descriptor}  torch.Tensor [N, D]
     output,
     num_matched,
+    size_num_matched, #几倍num_matched查找
     ref_poses_tensor,
     query_prefix=None,
     query_list=None,
@@ -164,7 +165,7 @@ def find_similar_vpr_pose(
 
     # top-N prefetch (N = min(2*k, M))
     k = num_matched
-    N = 8*num_matched
+    N = int(size_num_matched*num_matched)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     query_desc = get_descriptors([query_name], query_descriptors)
     # Avoid self-matching
@@ -181,6 +182,30 @@ def find_similar_vpr_pose(
     # print(f"topN_idx: {topN_idx}")
     # print(f"topN_scores: {topN_scores}")
     # print(f"topN_poses: {topN_poses}")
+
+
+    # for i in range(len(topN_scores)):
+    #     if topN_scores[i] < topN_scores[0] * 0.6:
+    #         N = i
+    #         print(f"N: {N}")
+    #         break
+    # if N < k:
+    #     N = k
+    # pairs = pairs_from_score_matrix(sim, self, N)
+    # topN_idx = [int(j) for i,j in pairs]
+    # topN_names = [db_names[i] for i in topN_idx]
+    # topN_poses_tensor = ref_poses_tensor[topN_idx]
+    # topN_poses = topN_poses_tensor.cpu().numpy()
+    # topN_scores_tensor = sim[0][topN_idx]
+    # topN_scores = topN_scores_tensor.cpu().numpy()
+
+
+
+
+
+
+
+
 
     centers_all = topN_poses[:, :3, 3]
     R_all = topN_poses[:, :3, :3]
@@ -206,6 +231,9 @@ def find_similar_vpr_pose(
     cand_centers = centers_all[cand_indices]
     cand_forwards = forwards_all[cand_indices]
     cand_scores = sims_all[cand_indices]
+    # 归一化分数
+    s_min, s_max = cand_scores.min(), cand_scores.max()
+    cand_norm_scores = (cand_scores - s_min) / (s_max - s_min + 1e-6)
 
     cand_names = [db_names[topN_idx[i]] for i in cand_indices]
     # print(f"cand_names: {cand_names}")
@@ -266,9 +294,9 @@ def find_similar_vpr_pose(
             
             # 综合打分: 
             # 距离分 (Geometry Diversity) + 相似度分 (Visual Reliability)
-            # cand_scores[i] 也是 normalized 或者原始值，建议归一化到 0~1 范围如果可能
+            # cand_norm_scores[i] 大小归一化了
             # 这里的 sim_weight 是为了打破纯几何的 tie，或者避免选到 VPR 分数太低的点
-            score = min_dist + sim_weight * float(cand_scores[i])
+            score = min_dist + sim_weight * float(cand_norm_scores[i])
             
             if score > best_score:
                 best_score = score
@@ -457,6 +485,138 @@ def find_similar_vpr_pose_kmeans(
             f.write("\n".join(" ".join([i, j]) for i, j in pairs))
             
     return selected_globals, selected_names, info
+
+
+# def find_similar_vpr_pose_v5_maximized(
+#     query_name,
+#     query_descriptors, # ... 其他参数 ...
+#     db_desc,           
+#     db_names,
+#     output,
+#     num_matched,          # K=10
+#     ref_poses_tensor,
+#     # --- 关键参数 ---
+#     prefetch_size=100,    # 1. 暴力拉取：直接看前100个，足够大了
+#     similarity_keep_ratio=0.85, # 2. 界限：只要分数 > Top1 * 0.85，就算“相似池子”里的
+#     # --- 多样性参数 ---
+#     pos_weight=0.3,
+#     ang_weight=0.5,
+#     sim_weight=0.2,
+#     outlier_percentile=95
+# ):
+#     """
+#     V5 极简最大化版：
+#     1. 先拿 Top-100。
+#     2. 用 Top-1 分数划线，保留所有高分样本，最大化候选池。
+#     3. 在这个大池子里贪心选最散的 10 个。
+#     """
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     k = num_matched
+    
+#     # --- 第一步：暴力拉取 Top-100 ---
+#     # 不要一点点 loop，直接算！
+#     query_desc = get_descriptors([query_name], query_descriptors)
+#     sim_matrix = torch.einsum("id,jd->ij", query_desc.to(device), db_desc.to(device))
+    
+#     # 获取 Top-100 的索引和分数
+#     # topk 直接返回排好序的结果，速度极快
+#     top_scores, top_indices = torch.topk(sim_matrix, k=min(prefetch_size, sim_matrix.shape[1]), dim=1)
+    
+#     # 转 numpy
+#     pool_indices = top_indices[0].cpu().numpy()
+#     pool_scores = top_scores[0].cpu().numpy()
+    
+#     # --- 第二步：最大化候选池 (划定相似界限) ---
+#     # 核心逻辑：谁是“不相似”的？ 只有那些分数掉得太狠的才是不相似。
+#     # 我们以 Top-1 为基准。如果 Top-1 是 0.9，那么 0.9*0.85 = 0.765 以上的都算相似。
+#     # 如果 Top-1 只有 0.6，那么 0.6*0.85 = 0.51 以上的都算相似。
+#     # 这就实现了“自适应最大化”。
+    
+#     top1_score = pool_scores[0]
+#     threshold = top1_score * similarity_keep_ratio
+    
+#     # 找到截断点：所有大于阈值的都保留
+#     # np.argmax 在布尔数组中会返回第一个 False 的位置，如果没有 False 返回 0
+#     # 我们找第一个 < threshold 的位置
+#     mask = pool_scores >= threshold
+#     valid_count = np.sum(mask)
+    
+#     # 哪怕池子很大，我们至少也要保留 k 个，防止阈值切太狠
+#     valid_count = max(valid_count, k) 
+    
+#     # 最终的候选池 (Candidate Pool)
+#     # 这就是你要的“最大化的相似序列”
+#     cand_indices = pool_indices[:valid_count]
+#     cand_scores = pool_scores[:valid_count]
+    
+#     # 对应的位姿
+#     cand_poses = ref_poses_tensor[cand_indices].cpu().numpy()
+#     cand_centers = cand_poses[:, :3, 3]
+
+#     print(f"DEBUG: Top1分数={top1_score:.4f}, 阈值={threshold:.4f}, 最大化池子大小={len(cand_indices)}")
+
+#     # --- 第三步：贪心多样性选择 (逻辑不变) ---
+#     # 1. 局部尺度计算
+#     median_pos = np.median(cand_centers, axis=0)
+#     dists = np.linalg.norm(cand_centers - median_pos, axis=1)
+#     scene_scale = max(np.median(dists) * 2.0, 1.0)
+#     outlier_cut = np.percentile(dists, outlier_percentile)
+
+#     # 2. 准备方向向量
+#     R_pool = cand_poses[:, :3, :3]
+#     z_ref = np.array([0, 0, 1.0])
+#     fwds = (R_pool @ z_ref.reshape(3,1)).squeeze(-1)
+#     fwds /= (np.linalg.norm(fwds, axis=1, keepdims=True) + 1e-12)
+    
+#     # 3. 归一化分数 (0~1)
+#     s_min, s_max = cand_scores.min(), cand_scores.max()
+#     norm_scores = (cand_scores - s_min) / (s_max - s_min + 1e-6)
+
+#     # 4. 开始选
+#     selected_local = [0] # 必选 Top1
+    
+#     while len(selected_local) < k:
+#         best_score = -1e9
+#         best_idx = -1
+        
+#         for i in range(len(cand_indices)):
+#             if i in selected_local: continue
+#             if dists[i] > outlier_cut: continue # 离群点太远不要
+            
+#             # 找离已选集最远的点
+#             min_dist = 1e9
+#             for sel in selected_local:
+#                 d_pos = np.linalg.norm(cand_centers[i] - cand_centers[sel]) / scene_scale
+#                 dot = np.clip(np.dot(fwds[i], fwds[sel]), -1.0, 1.0)
+#                 d_ang = np.arccos(dot) / np.pi
+#                 d = pos_weight * d_pos + ang_weight * d_ang
+#                 if d < min_dist: min_dist = d
+            
+#             # 综合打分
+#             score = min_dist + sim_weight * norm_scores[i]
+#             if score > best_score:
+#                 best_score = score
+#                 best_idx = i
+        
+#         if best_idx != -1:
+#             selected_local.append(best_idx)
+#         else:
+#             break
+
+#     # 输出
+#     final_global_idx = [cand_indices[i] for i in selected_local]
+#     final_names = [db_names[i] for i in final_global_idx]
+    
+#     # 写文件...
+#     pairs_out = [(query_name, name) for name in final_names]
+#     with open(output, "w") as f:
+#         f.write("\n".join(" ".join([i, j]) for i, j in pairs_out))
+        
+#     return final_global_idx
+
+
+
+
 
 
 

@@ -9,7 +9,7 @@ import time
 import os
 from hloc import extract_features, extractors
 from hloc.utils.base_model import dynamic_load
-from vps.utils.find_similar import find_similar, parse_names, get_descriptors, find_similar_vpr_pose,find_similar_vpr_pose_kmeans
+from vps.utils.find_similar import find_similar, parse_names, get_descriptors, find_similar_vpr_pose
 from hloc.utils.io import list_h5_names
 import logging
 class VisualPlaceRecognition:
@@ -25,6 +25,7 @@ class VisualPlaceRecognition:
         self.config = config
         self.method = config['vpr']['method']
         self.top_k = config['vpr']['top_k']
+        self.size_num_matched = config['vpr']['size_num_matched']
         self.ref_data_path = config['vpr']['ref_data_path']
         self.similarity_threshold = config['vpr'].get('similarity_threshold', 0.7)  # 相似度阈值
 
@@ -173,8 +174,11 @@ class VisualPlaceRecognition:
             db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
             output=self.config['vpr']['pairs_file_path'], # 输出文件路径
             num_matched=self.top_k, # 匹配数量 int
+            size_num_matched=self.size_num_matched, #几倍num_matched查找
             ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
             )   
+
+
         # find_similar_vpr_pose_kmeans(
         #     query_name=Path(query_image).name,
         #     query_descriptors=query_descriptors, #query 特征   Path

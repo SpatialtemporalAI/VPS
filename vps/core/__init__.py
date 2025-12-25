@@ -106,7 +106,9 @@ class VisualPositioningSystem:
             logging.info(f"VPR time: {b - a} seconds")
         b = time.time()
         # 执行姿态估计
+        pose_answer,depth,new_map = None,None,None
         pose_answer,depth,new_map = self.pose_estimator.estimate_pose(query_image, query_depth)
+        # pose_answer = self.pose_estimator.estimate_pose(query_image, query_depth)
         c = time.time()
         logging.info(f"Pose estimation time: {c - b} seconds")
         logging.info(f"VPS total time: {c - a} seconds")

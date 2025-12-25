@@ -224,6 +224,32 @@ class PoseEstimator:
             q2r_pose[0:3,3] = q2r_pose[0:3,3] / np.linalg.norm(q2r_pose[0:3,3])
         # 计算最终的位姿
         final_pose = ma.motion_averaging(ref_poses_gt, q2r_poses)
+        logging.info(f"start analyze scale:")
+        scales = []
+        for i in range(len(ref_poses_gt)):
+            # --- 真实世界的相对位移 (GT) ---
+            # P_query_gt 是你通过 Motion Averaging 得到的 final_pose (c2w)
+            # P_ref_gt 是 ref_poses_gt[i] (c2w)
+            # 计算从 Ref 到 Query 的位移向量
+            t_ref2query_gt = final_pose[:3, 3] - ref_poses_gt[i][:3, 3]
+            dist_gt = np.linalg.norm(t_ref2query_gt)
+
+            # --- 模型预测的相对位移 (Model Space) ---
+            # 这里的 P_query 和 P_refs 是模型输出的 c2w
+            t_ref2query_model = P_query[:3, 3] - P_refs[i][:3, 3]
+            dist_model = np.linalg.norm(t_ref2query_model)
+
+            if dist_model > 1e-6: # 防止除以0
+                scales.append(dist_gt / dist_model)
+
+        # 2. 取中位数得到最终尺度因子 s
+        final_scale = np.mean(scales)
+
+        logging.info(f"检测到的尺度因子 s = {scales}")
+
+
+
+
         final_depth = depth_map[0].squeeze()
         final_point = point_map[0].squeeze()
         mask = self.generate_mask_from_coord(original_coord=original_coords[0],
@@ -291,7 +317,7 @@ class PoseEstimator:
                     max_dist=self.max_dist,
                     occupancy_min_points_per_cell=15,
                     up=self.up,
-                    showself=False
+                    showself=True
                 )
 
                 logging.info("Depth navigation path executed and map updated.")

@@ -7,30 +7,22 @@ import sys
 from pathlib import Path
 import numpy as np
 import os
-from analyze_translation_error import main as analyze_translation_error
 import logging
-import datetime
-# Add the project root to the Python path
+
+# 确保项目根目录在 Python 路径中
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from vps.utils.metric import get_translation_error, get_transl_ang_err, get_rot_err
+import datetime
 from vps.core import VisualPositioningSystem
 import yaml
 import time
-def rotation_error(R1, R2):
-    # R1, R2: 3x3旋转矩阵
-    R = R1 @ R2.T
-    trace = np.clip(np.trace(R), -1.0, 3.0)
-    angle = np.arccos((trace - 1) / 2)
-    return np.degrees(angle)
 
-def translation_error(t1, t2):
-    # t1, t2: 3维平移向量
-    return np.linalg.norm(t1 - t2) * 100  # m->cm
 # 假设vps结果和gt都为4x4的txt
 def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
     thresholds = [
-        (1, 1),(3,3), (5, 5),(5,10),(5,15),(3,20),(3,30) ,(5, 10), (5, 15)
+        (1, 1),(3,3), (5, 5),(5,10),(10,10),(5,20),(10,20) ,(20, 20)
     ]
     # 失败指标：旋转误差大于5度或平移误差大于20cm
     failure_r_thresh = 1000000000000000000
@@ -58,10 +50,10 @@ def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
             gt = np.loadtxt(gt_path)
             R_pred, t_pred = pred[:3, :3], pred[:3, 3]
             R_gt, t_gt = gt[:3, :3], gt[:3, 3]
-            r_err = rotation_error(R_pred, R_gt)
-            t_err = translation_error(t_pred, t_gt)
-            angle_deg, scale, best_terror = analyze_translation_error(gt_path, pred_path)
-            result_str = f"{name}: t_err={t_err:.4f}cm, r_err={r_err:.4f}deg, angle_deg={angle_deg:.4f}deg, scale={scale:.4f}, best_error={best_terror:.4f}cm"
+            r_err = get_rot_err(R_pred, R_gt)
+            t_err = get_translation_error(t_pred, t_gt)
+            t_angle_err = get_transl_ang_err(t_pred, t_gt)
+            result_str = f"{name}: t_err={t_err:.4f}cm, r_err={r_err:.4f}deg, t_angle_err={t_angle_err:.4f}deg"
             if r_err < failure_r_thresh and t_err < failure_t_thresh:
                 successful_t_errs.append(t_err)
                 successful_r_errs.append(r_err)
@@ -112,9 +104,9 @@ with open(config_path, 'r') as f:
     config = yaml.safe_load(f)
 
 # Initialize VPS
+query_dir = Path("/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/test/rgb")
 vps = VisualPositioningSystem(config_path=config_path)
 start_time = time.time()
-query_dir = Path("/ssd1/phw/scene1/query/rgb")
 for ext in ["*.jpg", "*.png"]:
     for query_image in sorted(query_dir.glob(ext)):
         a = query_image.stem
@@ -126,9 +118,9 @@ for ext in ["*.jpg", "*.png"]:
         vps.localize(query_image,query_depth=query_depth)
 end_time = time.time()
 print(f"Time taken: {end_time - start_time:.2f} seconds")
-result_dir = "/ssd1/phw/scene1/outputs/poses"
-gt_dir = "/ssd1/phw/scene1/query/poses"
-result_txt_path = "/ssd1/phw/scene1/outputs/result.txt"
+result_dir = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/poses"
+gt_dir = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/test/poses"
+result_txt_path = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/result.txt"
 evaluate(query_dir, result_dir, gt_dir, result_txt_path)
 
 
