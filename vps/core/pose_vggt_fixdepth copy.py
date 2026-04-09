@@ -307,7 +307,8 @@ class PoseEstimator:
 
             # pred_floor_h = get_floor_height(pcd,cam_pred_h,up=self.up)
 
-            pred_floor_h = cam_pred_h - scale * (cam_pred_h - pred_floor_h)
+            # pred_floor_h = cam_pred_h - scale * (cam_pred_h - pred_floor_h)
+            pred_floor_h = cam_pred_h - self.cam_real_h
             logging.info(f"after scale,pred_floor_h is {pred_floor_h}")
             obstacle_points, avalibale_points = segment_points_h(pcd,pred_floor_h,cam_pred_h,up=self.up)
 
@@ -322,7 +323,7 @@ class PoseEstimator:
                     max_dist=self.max_dist,
                     occupancy_min_points_per_cell=15,
                     up=self.up,
-                    showself=True
+                    showself=False
                 )
 
                 logging.info("Depth navigation path executed and map updated.")

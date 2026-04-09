@@ -9,6 +9,39 @@ import math
 import torch
 from torchvision import transforms
 
+
+def w2c34_to_c2w44(extrinsic):
+    """
+    Convert model extrinsic from (N,3,4) w2c to (N,4,4) c2w.
+    Also accepts (3,4), (4,4), (N,4,4).
+    """
+    arr = np.asarray(extrinsic)
+    if arr.ndim == 2:
+        if arr.shape == (3, 4):
+            arr = arr[None, ...]
+        elif arr.shape == (4, 4):
+            arr = arr[None, ...]
+        else:
+            raise ValueError(f"Unsupported extrinsic shape: {arr.shape}")
+    elif arr.ndim != 3:
+        raise ValueError(f"Unsupported extrinsic shape: {arr.shape}")
+
+    if arr.shape[1:] == (4, 4):
+        return arr
+    if arr.shape[1:] != (3, 4):
+        raise ValueError(f"Unsupported extrinsic shape: {arr.shape}")
+
+    bottom = np.tile(
+        np.array([0.0, 0.0, 0.0, 1.0], dtype=arr.dtype), (arr.shape[0], 1)
+    )
+    w2c = np.concatenate([arr, bottom[:, None, :]], axis=1)  # (N,4,4)
+    return np.linalg.inv(w2c)
+
+
+def w34w2cTo44c2w(extrinsic):
+    """Backward-friendly alias."""
+    return w2c34_to_c2w44(extrinsic)
+
 def load_imagesPathList_as_tensor(path_list, PIXEL_LIMIT=255000):
     """
     用于pi3的图像预处理

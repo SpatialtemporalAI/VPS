@@ -45,5 +45,5 @@ def process_dataset(root_dir):
 
 if __name__ == "__main__":
     # 指定你的数据集根目录
-    target_dir = "/data/nvme0n1/phw/7scenes"
+    target_dir = "/home/panhewei/reloc3r/data/7scenes"
     process_dataset(target_dir)

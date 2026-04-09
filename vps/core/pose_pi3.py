@@ -13,7 +13,7 @@ from pi3.models.pi3 import Pi3
 from pi3.utils.basic import load_images_as_tensor # Assuming you have a helper function
 from pi3.utils.geometry import depth_edge
 from scipy.spatial.transform import Rotation as R
-from vps.utils.processing import compute_scale_factor, generate_ref_list, load_imagesPathList_as_tensor, umeyama_alignment, motion_averaging
+from vps.utils.processing import compute_scale_factor, generate_ref_list, load_imagesPathList_as_tensor
 from vps.utils.motion_averaging_raw import MotionAveraging
 from safetensors.torch import load_file
             
@@ -100,7 +100,48 @@ class PoseEstimatorPi3:
         scale_factor = 1.0
         final_pose = None
         if self.config['pose']['use_motion_average']:
-        #############使用运动平均
+        ############################################################最相似的ref充当锚点########################################
+            query2ref = np.linalg.inv(P_refs[0]) @ P_query
+            # 读取参考图像的pose
+            # 最相似的ref充当锚点
+            ref_img = Path(ref_imgs[0])
+            final_pose = ref_poses_gt[0] @ query2ref
+            result_path = Path(self.config['pose']['pi3']['results_dir']+"最相似") / f"{query_img.stem}.txt"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savetxt(result_path, final_pose)
+############################################################简单求平均################################################
+            query2ref = [np.linalg.inv(P_ref) @ P_query for P_ref in P_refs]
+
+            # 1. 收集所有参考帧推算出的候选位姿 (Candidate Poses)
+            candidate_poses = []
+            for i in range(len(P_refs)):
+                # T_q2w = T_ref2w * T_q2ref
+                t_q2w = ref_poses_gt[i] @ query2ref[i]
+                candidate_poses.append(t_q2w)
+
+            # 2. 对平移部分 (Translation) 求简单算术平均
+            all_translations = np.array([p[:3, 3] for p in candidate_poses])
+            avg_translation = np.mean(all_translations, axis=0)
+
+            # 3. 对旋转部分 (Rotation) 求平均
+            # 注意：旋转不能直接相加除以N，需要用四元数平均或SVD方法
+            all_rotations = [p[:3, :3] for p in candidate_poses]
+            rots = R.from_matrix(all_rotations)
+            # scipy的mean方法实现了基于四元数的旋转平均
+            avg_rotation_matrix = rots.mean().as_matrix()
+
+            # 4. 组合成最终的 4x4 矩阵
+            final_pose = np.eye(4)
+            final_pose[:3, :3] = avg_rotation_matrix
+            final_pose[:3, 3] = avg_translation
+            result_path = Path(self.config['pose']['pi3']['results_dir']+"简单平均") / f"{query_img.stem}.txt"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savetxt(result_path, final_pose)
+
+
+        
+############################################################运动平均##################################################
+
             ma = MotionAveraging()
             q2r_poses = [np.linalg.inv(P_ref) @ P_query for P_ref in P_refs]
             # r2q_poses = [np.linalg.inv(P_query) @ P_ref for P_ref in P_refs]

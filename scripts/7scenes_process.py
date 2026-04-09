@@ -3,10 +3,10 @@ import shutil
 import numpy as np
 import cv2
 
-base_dir = "/ssd1/phw/7scene/stairs/"
+base_dir = "/home/panhewei/reloc3r/data/7scenes/stairs/"
 train_txt = os.path.join(base_dir, "TrainSplit.txt")
 test_txt = os.path.join(base_dir, "TestSplit.txt")
-out_dir = "/ssd1/phw/7scene/stairs"
+out_dir = "/home/panhewei/reloc3r/data/7scenes/stairs"
 
 train_rgb_out = os.path.join(out_dir, "train/rgb")
 test_rgb_out = os.path.join(out_dir, "test/rgb")

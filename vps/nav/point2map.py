@@ -3,6 +3,8 @@ import open3d as o3d
 from typing import Optional, Tuple, Dict, Any
 import cv2
 import yaml
+import time
+import logging
 def get_floor_height(
                 pcd: np.ndarray,
                 cam_pred_h: float,
@@ -227,11 +229,11 @@ def get_new_occupancy_map(
     camera_6dpose: np.ndarray, # 必须参数
     min_dist: float,          # 新增参数：最小距离
     max_dist: float,          # 新增参数：最大距离
-    occupancy_min_points_per_cell: int = 8,
+    occupancy_min_points_per_cell: int = 15,
     obstacle_value: int = 50,    # 地图上表示障碍物的值 (通常为黑色)
     free_value: int = 200,      # 地图上表示空闲的值 (通常为白色)
     up: str = 'z',
-    showself: bool = False      # 控制是否绘制相机位置并返回彩色图
+    showself: bool = True      # 控制是否绘制相机位置并返回彩色图
 ) -> Optional[np.ndarray]:
     """
     将新的障碍物点云投影到现有的 Occupancy Map 上进行更新，并根据距离过滤点云。
@@ -257,6 +259,7 @@ def get_new_occupancy_map(
                               否则返回 BGR 彩色图 uint8)。失败则返回 None。
     """
     # 映射关系
+    start_time = time.time()
     UP_AXIS_TO_PLANE = {
     'z': (0, 1), # P1=X(0), P2=Y(1)
     'y': (0, 2), # P1=X(0), P2=Z(2)
@@ -290,6 +293,7 @@ def get_new_occupancy_map(
     except Exception as e:
         print(f"加载地图或YAML文件失败: {e}")
         return None
+    logging.info(f"到加载地图和元数据的时间：{time.time() - start_time:.4f}s")
     # ----------------------------------------
 
     # --- 2. 可行区域距离过滤 ---
@@ -312,7 +316,7 @@ def get_new_occupancy_map(
     # 提取过滤后的点云
     ava_points_filtered = ava_points[valid_dist_mask]
     
-    
+    logging.info(f"到可行区域距离过滤的时间：{time.time() - start_time:.4f}s")
     # --- 3. 提取 2D 可行区域 ---
     ava_points_2d = ava_points_filtered[:, [p1_idx,p2_idx]]
     
@@ -353,7 +357,7 @@ def get_new_occupancy_map(
             
             occupancy_map[ava_y_indices, ava_x_indices] = free_value
             
-    
+    logging.info(f"到可行区域更新地图的时间：{time.time() - start_time:.4f}s")
     # --- 2. 障碍物
     # 距离过滤 ---
     
@@ -406,7 +410,8 @@ def get_new_occupancy_map(
     
     if valid_pts.size == 0:
         print("经过距离和边界过滤后，没有点落在地图范围内。")
-    
+    logging.info(f"到障碍物距离过滤的时间：{time.time() - start_time:.4f}s")
+
     # 计数过滤和更新
     N = occupancy_min_points_per_cell
     
@@ -422,7 +427,27 @@ def get_new_occupancy_map(
             occupancy_map[obs_y_indices, obs_x_indices] = obstacle_value
             
             print(f"成功将 {obs_y_indices.size} 个满足阈值 ({N} 个点) 的栅格标记为障碍物。")
-        
+    logging.info(f"到障碍物更新地图的时间：{time.time() - start_time:.4f}s")
+
+    # # ====== 在这里做 10cm 障碍物膨胀 ======
+    # inflation_pixels = int(0.30 / resolution)  # 推荐写成这样，更鲁棒
+    # inflation_pixels = max(1, inflation_pixels)
+
+    # obstacle_mask = (occupancy_map == obstacle_value).astype(np.uint8)
+
+    # kernel = cv2.getStructuringElement(
+    #     cv2.MORPH_ELLIPSE,
+    #     (2 * inflation_pixels + 1, 2 * inflation_pixels + 1)
+    # )
+
+    # inflated_mask = cv2.dilate(obstacle_mask, kernel)
+    # occupancy_map[inflated_mask > 0] = obstacle_value
+
+    # logging.info(
+    #     f"完成障碍物膨胀：{inflation_pixels} px "
+    #     f"(≈ {inflation_pixels * resolution:.2f} m)"
+    # )
+    # =====================================
     # --- 6. （可选）绘制相机位置 ---
     # 只有当 showself 为 True 时，才绘制红点并返回彩色图
     if not showself:

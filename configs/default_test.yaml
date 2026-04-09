@@ -3,22 +3,23 @@
 # Visual Place Recognition (VPR) settings
 vpr:
   method: "netvlad"  # Options: netvlad, megaloc
-  top_k: 10  # Number of similar images to retrieve
-  output_dir: "/data/nvme0n1/phw/7scenes/chess/outputs/"
+  top_k: 10 # Number of similar images to retrieve
+  size_num_matched: 10 #几倍topk里贪心搜索
+  output_dir: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/"
   check_ref: False #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
-  ref_data_path: "/data/nvme0n1/phw/7scenes/chess/ref"
-  ref_descriptors_path: "/data/nvme0n1/phw/7scenes/chess/outputs/ref.h5"
-  query_descriptors_path: "/data/nvme0n1/phw/7scenes/chess/outputs/query.h5"
-  pairs_file_path: "/data/nvme0n1/phw/7scenes/chess/outputs/pairs.txt"
+  ref_data_path: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/train"
+  ref_descriptors_path: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/ref.h5"
+  query_descriptors_path: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/query.h5"
+  pairs_file_path: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/pairs.txt"
   use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
-  history_file: "/data/nvme0n1/phw/7scenes/chess/outputs/last_pose.txt" #上一次定位结果
+  history_file: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/last_pose.txt" #上一次定位结果
   
 
 # Pose Estimation settings
 pose:
-  method: "vggt"  # Options: vggt, mast3r, pi3
+  method: "da3"  # Options: vggt, mast3r, pi3,vggt_nav
   use_depth_pre: False #是否使用深度预估
   depth_pre_model_path: "" #深度预估模型路径
   use_motion_average: True #是否使用运动平滑
@@ -26,7 +27,7 @@ pose:
     model_path: "/data/nvme0n1/phw/models/vggt1b.pt"  # If null, will download from HuggingFace
     image_size: 1024  # Input image size for VGGT
     image_resolution_size: 518
-    results_dir: "/data/nvme0n1/phw/7scenes/chess/outputs/poses"
+    results_dir: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/poses"
   mast3r:
     model_path: "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
     image_size: 512  # Input image size for MASt3R
@@ -35,6 +36,9 @@ pose:
   pi3:
     model_path: "checkpoints/model.safetensors"
     results_dir: "data/outputs/poses"
+  da3:
+    model_path: "/data/nvme0n1/phw/models/DA3-LARGE-1.1/DA3-LARGE-1.1"
+    results_dir: "/data/nvme0n1/phw/cambridge/Cambridge_StMarysChurch/outputs/poses"
   
 
 # System settings
@@ -56,9 +60,9 @@ service:
 
 
 depth_nav:  
-  able: true #开启深度修复避障导航
+  able: False #开启深度修复避障导航
   height_up: "z"   #or y 哪个坐标轴表示高度 朝上 
-  camera_real_h: 1.25 #相机实际高度（机器人相机距离地板高度）
+  camera_real_h: 1.18 #1.18 #0.9#相机实际高度（机器人相机距离地板高度）
   map_path: "/home/panhewei/VPS/vps/nav/map.png"  #地图路径
   yaml_path: "/home/panhewei/VPS/vps/nav/map.yaml" #地图对应的ros yaml配置文件路径
   min_dist: 0.1

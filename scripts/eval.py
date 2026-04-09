@@ -66,7 +66,8 @@ def evaluate(query_dir, result_dir, gt_dir, result_txt_path):
 
     num_successful = len(successful_results)
     success_rate = (num_successful / total * 100) if total > 0 else 0
-
+    if not os.path.exists(result_txt_path):
+        os.makedirs(os.path.dirname(result_txt_path), exist_ok=True)
     with open(result_txt_path, 'w') as f:
         f.write(f"总查询数: {total}\n")
         f.write(f"成功本地化数 (R < {failure_r_thresh}度, t < {failure_t_thresh}cm): {num_successful}\n")
@@ -104,23 +105,23 @@ with open(config_path, 'r') as f:
     config = yaml.safe_load(f)
 
 # Initialize VPS
-query_dir = Path("/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/test/rgb")
-vps = VisualPositioningSystem(config_path=config_path)
-start_time = time.time()
-for ext in ["*.jpg", "*.png"]:
-    for query_image in sorted(query_dir.glob(ext)):
-        a = query_image.stem
-        query_depth = os.path.join(query_dir, f"{a}.npy")
-        if os.path.exists(query_depth):
-            query_depth = query_depth
-        else:
-            query_depth = None
-        vps.localize(query_image,query_depth=query_depth)
-end_time = time.time()
-print(f"Time taken: {end_time - start_time:.2f} seconds")
-result_dir = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/poses"
-gt_dir = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/test/poses"
-result_txt_path = "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/result.txt"
+query_dir = Path("/home/panhewei/reloc3r/data/7scenes/stairs/test/rgb")
+# vps = VisualPositioningSystem(config_path=config_path)
+# start_time = time.time()
+# for ext in ["*.jpg", "*.png"]:
+#     for query_image in sorted(query_dir.glob(ext)):
+#         a = query_image.stem
+#         query_depth = os.path.join(query_dir, f"{a}.npy")
+#         if os.path.exists(query_depth):
+#             query_depth = query_depth
+#         else:
+#             query_depth = None
+#         vps.localize(query_image,query_depth=query_depth)
+# end_time = time.time()
+# print(f"Time taken: {end_time - start_time:.2f} seconds")
+result_dir = "/home/panhewei/reloc3r/data/7scenes/stairs/vggt4k/poses简单平均"
+gt_dir = "/home/panhewei/reloc3r/data/7scenes/stairs/test/poses"
+result_txt_path = "/home/panhewei/reloc3r/data/7scenes/stairs/outputs/result.txt"
 evaluate(query_dir, result_dir, gt_dir, result_txt_path)
 
 

@@ -10,19 +10,16 @@ import time
 import logging
 import torch.nn.functional as F
 import open3d as o3d
-from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images_square, load_and_preprocess_images
-from vggt.utils.pose_enc import pose_encoding_to_extri_intri
-from vggt.utils.geometry import unproject_depth_map_to_point_map
+from depth_anything_3.api import DepthAnything3
 from vps.utils.processing import compute_scale_factor, generate_ref_list, unproject_depth_map_to_point_cloud, trans_point_cloud
 from vps.utils.find_similar import get_descriptors, parse_names
 from vps.utils.motion_averaging_raw import MotionAveraging
 from vps.nav.point2map import *
 from torch.nn.attention import sdpa_kernel, SDPBackend
 
-#VGGT模型输出camera是c2w
+#DA3模型直接输出camera是w2c
 class PoseEstimator:  
-    """Pose estimation module using VGGT."""
+    """Pose estimation module using DA3."""
     
     def __init__(self, config: Dict):
         """
@@ -42,21 +39,9 @@ class PoseEstimator:
         else:
             self.dtype = torch.bfloat16
             
-        # Initialize VGGT model
-        self.model = VGGT()
-        model_path = config['pose']['vggt']['model_path']
-        if model_path:
-            self.model.load_state_dict(torch.load(model_path))
-        else:
-            _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
-            self.model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
-        
-        self.model.eval()
+        self.model = DepthAnything3.from_pretrained(config['pose']['da3']['model_path']).to("cuda")
         self.model = self.model.to(self.device)
-        
-        # Image preprocessing settings
-        self.image_load_size = config['pose']['vggt']['image_size']
-        self.image_resolution_size = config['pose']['vggt']['image_resolution_size']
+    
 
         #nav settings
         self.depth_nav = config['depth_nav']['able']
@@ -144,33 +129,6 @@ class PoseEstimator:
         # 转换成 NumPy 数组
         return final_mask_bool_tensor.cpu().numpy()
 
-    def run_VGGT(self, model, images, dtype, resolution=518):
-    # images: [B, 3, H, W]
-        assert len(images.shape) == 4
-        assert images.shape[1] == 3
-
-        images = F.interpolate(images, size=(resolution, resolution), mode="bilinear", align_corners=False)
-        with torch.no_grad():
-            with torch.cuda.amp.autocast(dtype=dtype):
-                with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                    images = images[None]  # add batch dimension
-                    aggregated_tokens_list, ps_idx = model.aggregator(images)
-
-            # Predict Cameras
-            pose_enc = model.camera_head(aggregated_tokens_list)[-1]
-            # Extrinsic and intrinsic matrices, following OpenCV convention (camera from world)
-            extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images.shape[-2:])
-            # Predict Depth Maps
-            depth_map, depth_conf = model.depth_head(aggregated_tokens_list, images, ps_idx)
-            # Predict Point Maps
-            point_map, point_conf = model.point_head(aggregated_tokens_list, images, ps_idx)
-        extrinsic = extrinsic.squeeze(0).cpu().numpy()
-        intrinsic = intrinsic.squeeze(0).cpu().numpy()
-        depth_map = depth_map.squeeze(0).cpu().numpy()
-        depth_conf = depth_conf.squeeze(0).cpu().numpy()
-        point_map = point_map.squeeze(0).cpu().numpy()
-        point_conf = point_conf.squeeze(0).cpu().numpy()
-        return extrinsic, intrinsic, depth_map, depth_conf,point_map,point_conf
     
     def estimate_pose(
         self, 
@@ -197,15 +155,20 @@ class PoseEstimator:
         image_paths.append(query_img)
         ref_imgs = generate_ref_list(query_img, self.config['vpr']['ref_data_path'], self.config['vpr']['pairs_file_path'])
         image_paths.extend(ref_imgs)
+        image_paths = [str(p) for p in image_paths]
         logging.info(f"image数量: {len(image_paths)}")
         assert len(image_paths) >=2
         start_time = time.time()
-        images, original_coords = load_and_preprocess_images_square(image_paths, self.image_load_size)
-        images = images.to(self.device)
-        # 运行VGGT获取相机参数和深度图
-        extrinsic, intrinsic, depth_map, depth_conf, point_map, point_conf = self.run_VGGT(self.model, images, self.dtype, self.image_resolution_size)
+        prediction = self.model.inference(
+                image=image_paths,
+                export_dir="",
+                export_format="mini_npz"
+            )
         end_time = time.time()
-        logging.info(f"VGGT 运行时间: {end_time - start_time:.2f}s")
+        extrinsic = prediction.extrinsics  #3x4 w2c
+        depth_map = prediction.depth
+        intrinsic = prediction.intrinsics
+        logging.info(f"DA3 inference time: {end_time - start_time:.2f}s")
         # Compute relative pose
         P_query = np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0) #w2c
         # 读取参考图像s的pose
@@ -251,48 +214,27 @@ class PoseEstimator:
 
 
         final_depth = depth_map[0].squeeze()
-        final_point = point_map[0].squeeze()
-        mask = self.generate_mask_from_coord(original_coord=original_coords[0],
-            load_size=self.image_load_size,target_size=self.image_resolution_size)
-        rows, cols = np.where(mask)
-        r_min, r_max = np.min(rows), np.max(rows)
-        c_min, c_max = np.min(cols), np.max(cols)
-        final_depth = final_depth[r_min : r_max + 1, c_min : c_max + 1]
-        # final_point = final_point[r_min : r_max + 1, c_min : c_max + 1]
-        # images = F.interpolate(images, size=(518, 518), mode="bilinear", align_corners=False)
-        # image_tensor = images[0] 
-        # # 2. 从 PyTorch 张量转换为 OpenCV/NumPy 格式
-        # # (3, H, W) -> (H, W, 3) -> 0-255 uint8 -> RGB -> BGR
-
-        # # 转换到 CPU，调整维度 (H, W, 3)，并转为 0-255 uint8
-        # img_np_rgb = image_tensor.permute(1, 2, 0).cpu().numpy()
-        # img_np_rgb = (img_np_rgb * 255).astype(np.uint8)
-
-        # # RGB 转 BGR (OpenCV 标准格式)
-        # img_bgr = cv2.cvtColor(img_np_rgb, cv2.COLOR_RGB2BGR)
-
-        # # 3. 应用相同的 Bounding Box 切片
-        # # 切片索引与 final_depth 使用的完全相同
-        # cropped_image = img_bgr[r_min : r_max + 1, c_min : c_max + 1]
-
-        # # 4. 保存裁剪后的图像到本地
-        # output_image_path = "cropped_vggt_input_image.png"
-        # cv2.imwrite(output_image_path, cropped_image)
-
-        # print(f"✅ 裁剪后的图像已保存到: {output_image_path}")
-        # print(f"裁剪图像形状: {cropped_image.shape}")
-
-        result_path = Path(self.config['pose']['vggt']['results_dir']) / f"{query_img.stem}.txt"
+        result_path = Path(self.config['pose']['da3']['results_dir']) / f"{query_img.stem}.txt"
         result_path.parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(result_path, final_pose)
         np.savetxt(result_path.parent.parent/ f"last_pose.txt", final_pose)
-        logging.info(f"vggt_final_pose: {final_pose}")
+        logging.info(f"da3_final_pose: {final_pose}")
         new_map = None
         if self.depth_nav == True:
+            point_start_time = time.time()
+
             # pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose)
-            # pcd = trans_point_cloud(final_point,extrinsic_cam=final_pose)
-            all_points = np.concatenate([p.reshape(-1, 3) for p in point_map], axis=0)
-            pcd = trans_point_cloud(all_points,extrinsic_cam=final_pose)
+            all_points = []
+            for i in range(len(extrinsic)):
+                pcd = unproject_depth_map_to_point_cloud(depth_map=depth_map[i].squeeze(),intrinsic_cam=intrinsic[i],
+                               extrinsic_cam=np.linalg.inv(np.concatenate([extrinsic[i], np.array([[0, 0, 0, 1]])], axis=0)))
+                all_points.append(pcd.reshape(-1, 3))
+            all_points = np.concatenate(all_points, axis=0)
+            #   c2w  @  w2c =
+            pcd = trans_point_cloud(all_points,extrinsic_cam=final_pose @ np.concatenate([extrinsic[0], np.array([[0, 0, 0, 1]])], axis=0))
+
+
+
             if self.up == 'z': 
                 cam_pred_h = final_pose[2][3]#z-up
             else:
@@ -302,13 +244,11 @@ class PoseEstimator:
             logging.info(pred_floor_h)
             scale = get_height_scale(cam_pred_h,pred_floor_h,self.cam_real_h)
             logging.info(f"camera_floor scale is {scale}")
-            # pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose,scale=scale)
-            pcd = trans_point_cloud(final_point,extrinsic_cam=final_pose,scale=scale)
+            pcd = unproject_depth_map_to_point_cloud(depth_map=final_depth,intrinsic_cam=intrinsic[0],extrinsic_cam=final_pose,scale=scale)
+            # pcd = trans_point_cloud(final_point,extrinsic_cam=final_pose,scale=scale)
 
             # pred_floor_h = get_floor_height(pcd,cam_pred_h,up=self.up)
-
             pred_floor_h = cam_pred_h - scale * (cam_pred_h - pred_floor_h)
-            logging.info(f"after scale,pred_floor_h is {pred_floor_h}")
             obstacle_points, avalibale_points = segment_points_h(pcd,pred_floor_h,cam_pred_h,up=self.up)
 
             if self.map_path.exists() and self.yaml_path.exists():
@@ -326,17 +266,17 @@ class PoseEstimator:
                 )
 
                 logging.info("Depth navigation path executed and map updated.")
-                cv2.imwrite('dawdawd.png',new_map)
             else:
                 logging.warning(
                     f"⚠️ 跳过地图更新：地图文件或 YAML 文件不存在。"
                     f"Map Path Exists: {self.map_path.exists()}, "
                     f"YAML Path Exists: {self.yaml_path.exists()}"
                 )
+            point_end_time = time.time()
+            logging.info(f"point time: {point_end_time - point_start_time:.4f}s")
+            self.save_points_as_ply(pcd, "output.ply")
 
-        # self.save_points_as_ply(pcd, "output.ply")
-
-            
+            cv2.imwrite('dawdawd.png',new_map)
         
         # np.save('a.npy',final_depth)
         # self.visualize_depth_map_colored_cv2(final_depth, 'colored_final_depth_cv2.png')

@@ -2,32 +2,26 @@
 
 # Visual Place Recognition (VPR) settings
 vpr:
-  method: "netvlad"  # Options: netvlad, megaloc
-  top_k: 10  # Number of similar images to retrieve
-  size_num_matched: 2 #几倍topk里贪心搜索
-  output_dir: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/"
+  method: "megaloc"  # Options: netvlad, megaloc
+  top_k: 10 # Number of similar images to retrieve
+  size_num_matched: 1 #几倍topk里贪心搜索
   check_ref: False #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
-  ref_data_path: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/train"
-  ref_descriptors_path: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/ref.h5"
-  query_descriptors_path: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/query.h5"
-  pairs_file_path: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/pairs.txt"
   use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
-  history_file: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/last_pose.txt" #上一次定位结果
   
 
 # Pose Estimation settings
 pose:
-  method: "vggt"  # Options: vggt, mast3r, pi3,vggt_nav
+  method: "vggt_nav"  # Options: vggt, mast3r, pi3,vggt_nav
   use_depth_pre: False #是否使用深度预估
-  depth_pre_model_path: "/ssd1/phw/checkpoints/depth.pt" #深度预估模型路径
+  depth_pre_model_path: "" #深度预估模型路径
   use_motion_average: True #是否使用运动平滑
   vggt:
     model_path: "/data/nvme0n1/phw/models/vggt1b.pt"  # If null, will download from HuggingFace
     image_size: 1024  # Input image size for VGGT
     image_resolution_size: 518
-    results_dir: "/data/nvme0n1/phw/cambridge/Cambridge_GreatCourt/outputs/poses"
+    results_dir: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/poses"
   mast3r:
     model_path: "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
     image_size: 512  # Input image size for MASt3R
@@ -36,6 +30,9 @@ pose:
   pi3:
     model_path: "checkpoints/model.safetensors"
     results_dir: "data/outputs/poses"
+  da3:
+    model_path: "/data/nvme0n1/phw/models/DA3-LARGE-1.1/DA3-LARGE-1.1"
+    results_dir: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/poses"
   
 
 # System settings
@@ -44,8 +41,6 @@ system:
   dtype: "bfloat16"  # Options: float16, float32, bfloat16
   seed: 42
 
-# Paths
-
 # Service settings
 service:
   # max_query_size: "10MB"  # Maximum query image size
@@ -53,14 +48,23 @@ service:
   temp_dir: "data/query"
   temp_rgb_name: "query.jpg"
   temp_depth_name: "query.npy"
+  maps:
+    - id: "map_a"
+      ref_data_path: "/data/nvme0n1/phw/烯创26-0310/train"
+      ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0310/outputs/ref.h5"
+      nav_map_path: "/home/panhewei/VPS_online/map26.png"
+      nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
+    - id: "map_b"
+      ref_data_path: "/data/nvme0n1/phw/烯创-三楼-0325/train"
+      ref_descriptors_path: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/ref.h5"
+      nav_map_path: "/home/panhewei/VPS_online/map3.png"
+      nav_yaml_path: "/home/panhewei/VPS_online/map3.yaml"
   # cleanup_temp_files: true  # Clean up temporary files after processing
 
 
 depth_nav:  
-  able: True #开启深度修复避障导航
+  able: False #开启深度修复避障导航
   height_up: "z"   #or y 哪个坐标轴表示高度 朝上 
-  camera_real_h: 1.1 #相机实际高度（机器人相机距离地板高度）
-  map_path: "/home/panhewei/VPS/vps/nav/map.png"  #地图路径
-  yaml_path: "/home/panhewei/VPS/vps/nav/map.yaml" #地图对应的ros yaml配置文件路径
+  camera_real_h: 1.19 #1.18 #相机实际高度（机器人相机距离地板高度）
   min_dist: 0.1
   max_dist: 5.0

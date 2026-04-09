@@ -145,7 +145,7 @@ class VisualPlaceRecognition:
         start_time = time.time()
         query_descriptors = self.extract_global_descriptors(unified_query_dir, Path(self.config['vpr']['query_descriptors_path']))
         end_time = time.time()
-        logging.info(f"query_image: {Path(query_image).name} extract_global_descriptors time: {end_time - start_time:.2f} seconds")
+        logging.info(f"query_image: {Path(query_image).name} extract_global_descriptors time: {end_time - start_time:.8f} seconds")
        
         if last_pose is None:
             self.last_pose = self._load_pose_history()
@@ -153,30 +153,33 @@ class VisualPlaceRecognition:
             self.last_pose = last_pose
         self._delete_history_file()
         start_time = time.time()
-        # find_similar(
-        #     query_descriptors=query_descriptors, #query 特征   Path
-        #     db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
-        #     db_names=self.db_names, #refs 名称 list
-        #     db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
-        #     output=self.config['vpr']['pairs_file_path'], # 输出文件路径
-        #     num_matched=self.top_k, # 匹配数量 int
-        #     similarity_threshold=self.similarity_threshold, # 相似度阈值 float
-        #     last_pose=self.last_pose, # 历史pose np.ndarray [3,]
-        #     spatial_radius=self.spatial_radius, # 空间搜索半径 float
-        #     use_spatial_filtering=self.use_spatial_filtering, # 是否开启空间过滤 bool
-        #     ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
-        # )
-        find_similar_vpr_pose(
-            query_name=Path(query_image).name,
-            query_descriptors=query_descriptors, #query 特征   Path
-            db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
-            db_names=self.db_names, #refs 名称 list
-            db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
-            output=self.config['vpr']['pairs_file_path'], # 输出文件路径
-            num_matched=self.top_k, # 匹配数量 int
-            size_num_matched=self.size_num_matched, #几倍num_matched查找
-            ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
-            )   
+        if self.size_num_matched == 1:
+            find_similar(
+                query_descriptors=query_descriptors, #query 特征   Path
+                db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
+                db_names=self.db_names, #refs 名称 list
+                db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
+                output=self.config['vpr']['pairs_file_path'], # 输出文件路径
+                num_matched=self.top_k, # 匹配数量 int
+                similarity_threshold=self.similarity_threshold, # 相似度阈值 float
+                last_pose=self.last_pose, # 历史pose np.ndarray [3,]
+                spatial_radius=self.spatial_radius, # 空间搜索半径 float
+                use_spatial_filtering=self.use_spatial_filtering, # 是否开启空间过滤 bool
+                ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
+            )
+        else:
+
+            find_similar_vpr_pose(
+                query_name=Path(query_image).name,
+                query_descriptors=query_descriptors, #query 特征   Path
+                db_descriptors=self.ref_descriptors, #refs 特征路径  list[path]
+                db_names=self.db_names, #refs 名称 list
+                db_desc=self.db_desc, # db map {name: descriptor}  torch.Tensor [N, D]
+                output=self.config['vpr']['pairs_file_path'], # 输出文件路径
+                num_matched=self.top_k, # 匹配数量 int
+                size_num_matched=self.size_num_matched, #几倍num_matched查找
+                ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
+                )   
 
 
         # find_similar_vpr_pose_kmeans(
@@ -190,6 +193,6 @@ class VisualPlaceRecognition:
         #     ref_poses_tensor=self.ref_poses_tensor # ref pose tensor torch.Tensor [N, 3]
         #     )  
         end_time = time.time()
-        logging.info(f"query_image: {Path(query_image).name} pairs_from_retrieval time: {end_time - start_time:.2f} seconds")
+        logging.info(f"query_image: {Path(query_image).name} pairs_from_retrieval time: {end_time - start_time:.8f} seconds")
         
         return self.config['vpr']['pairs_file_path']

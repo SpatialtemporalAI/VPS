@@ -40,6 +40,9 @@ class VisualPositioningSystem:
         elif pose_method == 'pi3':
             from .pose_pi3 import PoseEstimatorPi3
             self.pose_estimator = PoseEstimatorPi3(self.config)
+        elif pose_method == 'da3':
+            from .pose_da3 import PoseEstimator
+            self.pose_estimator = PoseEstimator(self.config)
         else:
             raise ValueError(f"Unsupported pose method: {pose_method}")
         self.use_depth_pre = self.config['pose']['use_depth_pre']
@@ -80,31 +83,31 @@ class VisualPositioningSystem:
             - processing_time: processing time in seconds
         """
         a = time.time()
-        if self.use_depth_pre and query_depth is None:
-            # 并行执行VPR和深度预测
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                # 提交VPR任务
-                vpr_future = executor.submit(self._vpr_task, query_image, last_pose)
+        # if self.use_depth_pre and query_depth is None:
+        #     # 并行执行VPR和深度预测
+        #     with ThreadPoolExecutor(max_workers=2) as executor:
+        #         # 提交VPR任务
+        #         vpr_future = executor.submit(self._vpr_task, query_image, last_pose)
                 
-                # 提交深度预测任务
-                depth_future = executor.submit(self._depth_task, query_image)
-                # 等待VPR完成
-                vpr_future.result()
-                # 等待深度预测完成（如果有）
-                depth_result = depth_future.result()
-                # 保存预测的深度到临时文件
-                depth_path = os.path.join(self.config['service']['temp_dir'], self.config['service']['temp_depth_name'])
-                os.makedirs(os.path.dirname(depth_path), exist_ok=True)
-                np.save(depth_path, depth_result['depth'].cpu().numpy())
-                query_depth = depth_path
+        #         # 提交深度预测任务
+        #         depth_future = executor.submit(self._depth_task, query_image)
+        #         # 等待VPR完成
+        #         vpr_future.result()
+        #         # 等待深度预测完成（如果有）
+        #         depth_result = depth_future.result()
+        #         # 保存预测的深度到临时文件
+        #         depth_path = os.path.join(self.config['service']['temp_dir'], self.config['service']['temp_depth_name'])
+        #         os.makedirs(os.path.dirname(depth_path), exist_ok=True)
+        #         np.save(depth_path, depth_result['depth'].cpu().numpy())
+        #         query_depth = depth_path
             
-                b = time.time()
-                logging.info(f"Parallel VPR + Depth time: {b - a} seconds")
-        else:
-            self.vpr.find_similar_images(query_image, last_pose)
-            b = time.time()
-            logging.info(f"VPR time: {b - a} seconds")
+        #         b = time.time()
+        #         logging.info(f"Parallel VPR + Depth time: {b - a} seconds")
+        # else:
+        self.vpr.find_similar_images(query_image, last_pose)
         b = time.time()
+        logging.info(f"VPR time: {b - a} seconds")
+        # b = time.time()
         # 执行姿态估计
         pose_answer,depth,new_map = None,None,None
         pose_answer,depth,new_map = self.pose_estimator.estimate_pose(query_image, query_depth)
