@@ -17,8 +17,8 @@ import yaml
 """
 
 # 配置参数
-file_directory = "/data/nvme0n1/phw/烯创26楼-0331/"  
-file_name = "烯创26楼-0331-无顶"
+file_directory = "/data/nvme0n1/phw/烯创26-0624/"  
+file_name = "烯创0624-无顶"
 pcd_file = file_directory + file_name + ".ply"
 
 

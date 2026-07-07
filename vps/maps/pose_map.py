@@ -24,6 +24,7 @@ class PoseMapConfig:
     calibration_dir: Optional[Path] = None
     nav_map_path: Optional[Path] = None
     nav_yaml_path: Optional[Path] = None
+    vggt_omega_ref_cache_path: Optional[Path] = None
 
 
 @dataclass

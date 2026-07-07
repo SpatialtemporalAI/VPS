@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,7 @@ from vps.maps.pose_map import PoseMap, PoseMapConfig
 from vps.maps.vpr_map import VPRMap, VPRMapConfig
 from vps.pipeline.pose_pipeline import LocalizationResult, PosePipeline, PosePipelineInput
 from vps.pipeline.vpr_pipeline import VPRPipeline
+from vps.utils.trajectory_filter import TrajectoryFilter
 import time
 import logging
 @dataclass
@@ -36,6 +38,7 @@ class LocalizationCoordinator:
         vpr_pipeline: VPRPipeline,
         pose_pipeline: PosePipeline,
         models: Optional[CoordinatorModels] = None,
+        trajectory_filter: Optional[TrajectoryFilter] = None,
     ):
         self.model_manager = model_manager
         self.map_manager = map_manager
@@ -43,6 +46,7 @@ class LocalizationCoordinator:
         self.vpr_pipeline = vpr_pipeline
         self.pose_pipeline = pose_pipeline
         self.models = models or CoordinatorModels()
+        self.trajectory_filter = trajectory_filter or TrajectoryFilter()
         self.result_map_dir = Path("data/outputs/result_maps")
         self._result_map_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -61,6 +65,7 @@ class LocalizationCoordinator:
         render_depth_dir: Optional[Path] = None,
         nav_map_path: Optional[Path] = None,
         nav_yaml_path: Optional[Path] = None,
+        vggt_omega_ref_cache_path: Optional[Path] = None,
     ) -> None:
         root_dir = Path(root_dir)
         vpr_map = VPRMap(
@@ -83,6 +88,7 @@ class LocalizationCoordinator:
                 calibration_dir=calibration_dir,
                 nav_map_path=nav_map_path,
                 nav_yaml_path=nav_yaml_path,
+                vggt_omega_ref_cache_path=vggt_omega_ref_cache_path,
             )
         )
         self.map_manager.register(
@@ -109,7 +115,6 @@ class LocalizationCoordinator:
         depth_paths: Optional[list[Path]] = None,
         poses_paths: Optional[list[Path]] = None,
         k_paths: Optional[list[Path]] = None,
-        last_pose_hint: Optional[np.ndarray] = None,
     ) -> LocalizationResult:
         start_time = time.time()
         request_tag = f"robot={robot_id}"
@@ -118,9 +123,7 @@ class LocalizationCoordinator:
             raise RuntimeError(f"Robot '{robot_id}' has no active map. Call switch_map first.")
 
         map_instance = self.map_manager.get(session.active_map_id)
-        last_pose_xyz = self._pose_to_xyz(last_pose_hint)
-        if last_pose_xyz is None:
-            last_pose_xyz = self._pose_to_xyz(session.last_pose)
+        last_pose_xyz = self._pose_to_xyz(session.last_pose)
         vpr_start = time.time()
         vpr_result = self.vpr_pipeline.run(
             query_image=Path(query_image),
@@ -137,6 +140,8 @@ class LocalizationCoordinator:
             PosePipelineInput(
                 query_image=vpr_result.query_image_path,
                 ref_image_paths=vpr_result.ref_image_paths,
+                robot_id=robot_id,
+                ref_poses=vpr_result.ref_poses,
                 depth_paths=depth_paths,
                 poses_paths=poses_paths,
                 K_paths=k_paths,
@@ -144,18 +149,102 @@ class LocalizationCoordinator:
             pose_map=map_instance.pose_map,
         )
         if pose_result.pose_c2w is not None:
-            session.update_pose(pose_result.pose_c2w)
-            self._schedule_result_map_save(
-                robot_id=robot_id,
-                pose_map=map_instance.pose_map,
-                pose_result=pose_result,
+            now = datetime.now(timezone.utc)
+            pose_decision = self.trajectory_filter.evaluate_pose(
+                previous_pose=session.last_pose,
+                previous_time=session.last_update_time,
+                current_pose=pose_result.pose_c2w,
+                now=now,
             )
+            logging.info(
+                "[%s] trajectory_pose_filter accepted=%s reason=%s dt=%s distance=%s "
+                "speed=%s yaw_delta=%s yaw_rate=%s",
+                request_tag,
+                pose_decision.accepted,
+                pose_decision.reason,
+                self._fmt_optional_float(pose_decision.dt_seconds),
+                self._fmt_optional_float(pose_decision.distance_m),
+                self._fmt_optional_float(pose_decision.speed_mps),
+                self._fmt_optional_float(pose_decision.yaw_delta_deg),
+                self._fmt_optional_float(pose_decision.yaw_rate_degps),
+            )
+            if not pose_decision.accepted:
+                pose_result.pose_c2w = None
+                pose_result.occupancy_map = None
+            else:
+                self._maybe_update_temporal_pose(
+                    robot_id=robot_id,
+                    map_id=map_instance.pose_map.config.map_id,
+                    query_image=vpr_result.query_image_path,
+                    pose_c2w=pose_result.pose_c2w,
+                    now=now,
+                )
+                session.update_pose(pose_result.pose_c2w, update_time=now)
+                self._schedule_result_map_save(
+                    robot_id=robot_id,
+                    pose_map=map_instance.pose_map,
+                    pose_result=pose_result,
+                )
         logging.info(
             f"[{request_tag}] pose_pipeline_time={time.time() - pose_start:.6f}s "
             f"success={pose_result.pose_c2w is not None}"
         )
         logging.info(f"[{request_tag}] coordinator_total_time={time.time() - start_time:.6f}s")
         return pose_result
+
+    def _maybe_update_temporal_pose(
+        self,
+        robot_id: str,
+        map_id: str,
+        query_image: Path,
+        pose_c2w: np.ndarray,
+        now: datetime,
+    ) -> None:
+        session = self.session_manager.get_or_create(robot_id)
+        temporal_state = session.runtime_overrides.setdefault("temporal_filter", {})
+        state_key = str(map_id)
+        map_state = temporal_state.setdefault(state_key, {})
+        previous_pose = map_state.get("last_pose")
+        previous_time = map_state.get("last_time")
+
+        temporal_decision = self.trajectory_filter.should_add_temporal_frame(
+            previous_temporal_pose=previous_pose,
+            previous_temporal_time=previous_time,
+            current_pose=pose_c2w,
+            now=now,
+        )
+        logging.info(
+            "[robot=%s] temporal_frame_filter add=%s reason=%s map_id=%s dt=%s "
+            "distance=%s yaw_delta=%s",
+            robot_id,
+            temporal_decision.should_add,
+            temporal_decision.reason,
+            map_id,
+            self._fmt_optional_float(temporal_decision.dt_seconds),
+            self._fmt_optional_float(temporal_decision.distance_m),
+            self._fmt_optional_float(temporal_decision.yaw_delta_deg),
+        )
+        if not temporal_decision.should_add:
+            return
+
+        pose_model = self.model_manager.get(self.models.pose_model_name)
+        update_temporal_pose = getattr(pose_model, "update_temporal_pose", None)
+        if update_temporal_pose is None:
+            return
+        update_temporal_pose(
+            robot_id=robot_id,
+            map_id=map_id,
+            query_image=query_image,
+            pose_c2w=pose_c2w,
+        )
+        map_state["last_pose"] = np.asarray(pose_c2w, dtype=np.float32).copy()
+        map_state["last_time"] = now
+
+    @staticmethod
+    def _fmt_optional_float(value: Optional[float]) -> str:
+        if value is None:
+            return "None"
+        return f"{value:.6f}"
 
     def _prepare_pose_map(self, map_id: str) -> None:
         map_instance = self.map_manager.get(map_id)

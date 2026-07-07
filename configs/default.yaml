@@ -3,9 +3,13 @@
 # Visual Place Recognition (VPR) settings
 vpr:
   method: "megaloc"  # Options: netvlad, megaloc
+  # MegaLoc paper uses 322 at inference. Changing this requires rebuilding ref_descriptors_path.
+  # Leave empty/null to use hloc default, currently 1024.
+  resize_max:
+  use_single_query_fast_path: true #在线单张query走轻量提取路径；false则回到hloc原始main路径
   top_k: 10 # Number of similar images to retrieve
   size_num_matched: 1 #几倍topk里贪心搜索
-  check_ref: False #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
+  check_ref: false #启动的时候是否检测ref.h5 特征文件(maybe加入了新的数据)
   use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
@@ -13,7 +17,7 @@ vpr:
 
 # Pose Estimation settings
 pose:
-  method: "vggt_nav"  # Options: vggt, mast3r, pi3,vggt_nav
+  method: "vggt_omega"  # Options: vggt, omnivggt, vggt_omega, mast3r, pi3, vggt_nav
   use_depth_pre: False #是否使用深度预估
   depth_pre_model_path: "" #深度预估模型路径
   use_motion_average: True #是否使用运动平滑
@@ -33,6 +37,23 @@ pose:
   da3:
     model_path: "/data/nvme0n1/phw/models/DA3-LARGE-1.1/DA3-LARGE-1.1"
     results_dir: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/poses"
+  omnivggt:
+    model_path: "/data/nvme0n1/phw/models/omnivggt/OmniVGGT.safetensors "  # If null, will download from HuggingFace
+    image_size: 1024  # Input image size for VGGT
+    image_resolution_size: 518
+    # results_dir: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/poses"
+  vggt_omega:
+    model_path: "/data/nvme0n1/phw/models/vggt-omega/vggt_omega_1b_256_text.pt"  # e.g. "vggt_omega_1b_256_text.pt  /vggt_omega/vggt_omega_1b_512.pt"
+    image_resolution: 256  # Input image resolution for VGGT-Omega (e.g., 256 or 512)
+    preprocess_mode: "max_size"  # Options: balanced, max_size
+    patch_size: 16
+    enable_alignment: true
+    cpu_num_threads: 8  # PyTorch CPU thread count; avoids stack/indexing latency spikes from too many threads.
+    temporal_window:
+      enabled: true
+      max_frames: 10
+      motion_max_frames: 10
+      max_age_seconds: 60.0
   
 
 # System settings
@@ -40,6 +61,20 @@ system:
   device: "cuda"  # Options: cuda, cpu
   dtype: "bfloat16"  # Options: float16, float32, bfloat16
   seed: 42
+
+# Runtime trajectory sanity filter.
+# Rejects physically impossible pose jumps before updating robot session/history.
+trajectory_filter:
+  enabled: true
+  max_speed_mps: 2.0          #机器人最大平移速度，超过 max_speed * dt + margin 的结果会被丢弃
+  speed_margin_m: 0.5         #定位噪声/时间误差容错距离
+  min_time_delta_seconds: 0.1 #高频请求时用于速度计算的最小dt，避免dt太小导致误杀
+  max_yaw_rate_degps:         #留空表示不启用旋转速度过滤；可设置如 180.0
+  yaw_margin_deg: 30.0
+  reject_invalid_pose: true
+  temporal_min_translation_m: 0.15 #历史帧至少移动这么多才加入，避免静止重复帧
+  temporal_min_yaw_deg: 8.0        #或旋转超过这个角度才加入
+  temporal_min_interval_seconds: 0.5
 
 # Service settings
 service:
@@ -49,17 +84,54 @@ service:
   temp_rgb_name: "query.jpg"
   temp_depth_name: "query.npy"
   maps:
-    - id: "map_a"
-      ref_data_path: "/data/nvme0n1/phw/烯创26-0310/train"
-      ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0310/outputs/ref.h5"
-      nav_map_path: "/home/panhewei/VPS_online/map26.png"
-      nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
-    - id: "map_b"
-      ref_data_path: "/data/nvme0n1/phw/烯创-三楼-0325/train"
-      ref_descriptors_path: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/ref.h5"
-      nav_map_path: "/home/panhewei/VPS_online/map3.png"
-      nav_yaml_path: "/home/panhewei/VPS_online/map3.yaml"
+    # - id: "map_a"
+    #   ref_data_path: "/data/nvme0n1/phw/高新医院/train"
+    #   ref_descriptors_path: "/data/nvme0n1/phw/高新医院/outputs/ref.h5"
+    #   nav_map_path: "/home/panhewei/VPS_online/map_gaoxin.png"
+    #   nav_yaml_path: "/home/panhewei/VPS_online/map_gaoxin.yaml"
+    # - id: "map_a"
+    #   ref_data_path: "/data/nvme0n1/phw/烯创26-0507/day/train"
+    #   ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/day/outputs/ref.h5"
+    #   nav_map_path: "/home/panhewei/VPS_online/map26.png"
+    #   nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
+    # light-aware logical map example:
+    - id: "floor26"
+      light_variants:
+        bright:
+          ref_data_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/train"
+          ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/outputs/ref.h5"
+          # Optional fixed-ref tensor cache for this map variant.
+          # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
+          vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/outputs/256.pt" 
+          nav_map_path: "/data/nvme0n1/phw/烯创26-0624/map.png"
+          nav_yaml_path: "/data/nvme0n1/phw/烯创26-0624/map.yaml"
+    # - id: "floor26"
+    #   light_variants:
+    #     bright:
+    #       ref_data_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/train"
+    #       ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/ref.h5"
+    #       # Optional fixed-ref tensor cache for this map variant.
+    #       # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
+    #       vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/vggt_omega_ref_256_maxsize.pt" 
+    #       nav_map_path: "/home/panhewei/VPS_online/map26.png"
+    #       nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
+    #     dark:
+    #       ref_data_path: "/data/nvme0n1/phw/烯创26-0507/night/train"
+    #       ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/night/outputs/ref.h5"
+    #       nav_map_path: "/home/panhewei/VPS_online/map26.png"
+    #       nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
+    # - id: "map_b"
+    #   ref_data_path: "/data/nvme0n1/phw/烯创-三楼-0325/train"
+    #   ref_descriptors_path: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/ref.h5"
+    #   nav_map_path: "/home/panhewei/VPS_online/map3.png"
+    #   nav_yaml_path: "/home/panhewei/VPS_online/map3.yaml"
+    
   # cleanup_temp_files: true  # Clean up temporary files after processing
+  light_selector:
+    brightness_threshold: 110.0
+    dark_threshold_low: 85
+    bright_threshold_high: 95.0
+    switch_confirm_frames: 3
 
 
 depth_nav:  

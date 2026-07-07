@@ -53,11 +53,12 @@ class VGGTModel(BasePoseModel):
         self,
         query_image: Path,
         ref_images: List[Path],
+        ref_poses: Optional[List[np.ndarray]] = None,
         depth_paths: Optional[List[Path]] = None,
         poses_paths: Optional[List[Path]] = None,
         k_paths: Optional[List[Path]] = None,
     ) -> PoseModelOutput:
-        del depth_paths, poses_paths, k_paths
+        del ref_poses, depth_paths, poses_paths, k_paths
         prepare_start = time.time()
         image_paths = [Path(query_image), *[Path(path) for path in ref_images]]
         paths_ready_time = time.time()

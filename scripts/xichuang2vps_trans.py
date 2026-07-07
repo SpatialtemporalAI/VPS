@@ -3,10 +3,10 @@ import json
 import numpy as np
 import shutil
 
-json_path = "/data/nvme0n1/phw/烯创26楼-0331/2026-03-31_09-15-16/transforms.json"
-folder1 = "/data/nvme0n1/phw/烯创26楼-0331/2026-03-31_09-15-16/undistort/left"
-folder2 = "/data/nvme0n1/phw/烯创26楼-0331/2026-03-31_09-15-16/undistort/right"
-output_dir = "/data/nvme0n1/phw/烯创26-0310/train"
+json_path = "/data/nvme0n1/phw/烯创26-0624/transforms.json"
+folder1 = "/data/nvme0n1/phw/烯创26-0624/undistort/left"
+folder2 = "/data/nvme0n1/phw/烯创26-0624/undistort/right"
+output_dir = "/data/nvme0n1/phw/烯创26-0624/day/train"
 
 rgb_dir = os.path.join(output_dir, "rgb")
 poses_dir = os.path.join(output_dir, "poses")
@@ -24,7 +24,7 @@ for idx, frame in enumerate(frames):
     R = T[:3, :3] @ np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
     T[:3, :3] = R
 
-    pose_path = os.path.join(poses_dir, f"{idx+7000}.txt")
+    pose_path = os.path.join(poses_dir, f"{idx}.txt")
     np.savetxt(pose_path, T, fmt="%.8f")
     print(f"Saved pose -> {pose_path}")
 
@@ -33,7 +33,7 @@ for idx, frame in enumerate(frames):
     for folder in [folder1, folder2]:
         img_path = os.path.join(folder, f"{ts}.jpg")
         if os.path.exists(img_path):
-            new_path = os.path.join(rgb_dir, f"{idx+7000}.png")
+            new_path = os.path.join(rgb_dir, f"{idx}.png")
             shutil.copy(img_path, new_path)
             print(f"Found {img_path}, saved as {new_path}")
             found = True

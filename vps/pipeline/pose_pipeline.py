@@ -23,9 +23,11 @@ from vps.utils.processing import trans_point_cloud
 class PosePipelineInput:
     query_image: Path
     ref_image_paths: List[Path]
-    depth_paths: Optional[List[Path]]
-    poses_paths: Optional[List[Path]]
-    K_paths: Optional[List[Path]]
+    robot_id: Optional[str] = None
+    ref_poses: Optional[List[np.ndarray]] = None
+    depth_paths: Optional[List[Path]] = None
+    poses_paths: Optional[List[Path]] = None
+    K_paths: Optional[List[Path]] = None
 
 
 @dataclass
@@ -44,6 +46,7 @@ class PosePipelineConfig:
     max_dist: float = 5.0
     occupancy_min_points_per_cell: int = 15
     nav_show_self: bool = True
+    temporal_motion_max_frames: int = 3
 
 
 class PoseModelProtocol(Protocol):
@@ -51,9 +54,13 @@ class PoseModelProtocol(Protocol):
         self,
         query_image: Path,
         ref_images: List[Path],
+        ref_poses: Optional[List[np.ndarray]] = None,
         depth_paths: Optional[List[Path]] = None,  #[query, ref1, ref2, ...] 
         poses_paths: Optional[List[Path]] = None, # [query, ref1, ref2, ...]
         k_paths: Optional[List[Path]] = None,
+        ref_cache_path: Optional[Path] = None,
+        robot_id: Optional[str] = None,
+        map_id: Optional[str] = None,
     ) -> object:
         ...
 
@@ -76,14 +83,19 @@ class PosePipeline:
         model_output = self.model.infer(
             query_image=payload.query_image,
             ref_images=ref_images,
+            ref_poses=payload.ref_poses,
             depth_paths=payload.depth_paths,
             poses_paths=payload.poses_paths,
             k_paths=payload.K_paths,
+            ref_cache_path=pose_map.config.vggt_omega_ref_cache_path,
+            robot_id=payload.robot_id,
+            map_id=pose_map.config.map_id,
         )
         localization = self._solve_motion_averaging(
             model_output=model_output,
             pose_map=pose_map,
             ref_image_paths=payload.ref_image_paths,
+            ref_poses=payload.ref_poses,
         )
         if localization.pose_c2w is None:
             return localization
@@ -101,6 +113,7 @@ class PosePipeline:
         model_output: PoseModelOutput,
         pose_map: PoseMap,
         ref_image_paths: List[Path],
+        ref_poses: Optional[List[np.ndarray]] = None,
     ) -> LocalizationResult:
         try:
             if not ref_image_paths:
@@ -121,19 +134,58 @@ class PosePipeline:
 
             query_c2w = model_output.extrinsic[0]  # c2w format 4x4 numpy array
             ref_pred_c2w = [model_output.extrinsic[i] for i in range(1, expected)]  # c2w format
-            ref_gt_c2w = [
-                pose_map.get_ref_pose(Path(ref_path).name) for ref_path in ref_image_paths
+            if ref_poses is not None:
+                if len(ref_poses) != num_refs:
+                    raise ValueError(
+                        f"VPR returned {len(ref_poses)} ref poses, expected {num_refs}."
+                    )
+                ref_gt_c2w = [np.asarray(pose) for pose in ref_poses]
+            else:
+                ref_gt_c2w = [
+                    pose_map.get_ref_pose(Path(ref_path).name) for ref_path in ref_image_paths
+                ]
+
+            temporal_available = len(model_output.temporal_poses)
+            temporal_use_count = min(
+                temporal_available,
+                self.config.temporal_motion_max_frames,
+            )
+            temporal_offset = temporal_available - temporal_use_count
+            temporal_gt_c2w = [
+                np.asarray(pose)
+                for pose in model_output.temporal_poses[temporal_offset:]
             ]
+            temporal_start = expected + temporal_offset
+            temporal_end = min(
+                model_output.extrinsic.shape[0],
+                temporal_start + len(temporal_gt_c2w),
+            )
+            temporal_pred_c2w = [
+                model_output.extrinsic[i] for i in range(temporal_start, temporal_end)
+            ]
+            if len(temporal_pred_c2w) != len(temporal_gt_c2w):
+                temporal_gt_c2w = temporal_gt_c2w[: len(temporal_pred_c2w)]
+
+            all_gt_c2w = [*ref_gt_c2w, *temporal_gt_c2w]
+            all_pred_c2w = [*ref_pred_c2w, *temporal_pred_c2w]
 
             q2r_poses = []
-            for pred_ref_c2w in ref_pred_c2w:
+            for pred_ref_c2w in all_pred_c2w:
                 q2r = np.linalg.inv(pred_ref_c2w) @ query_c2w
                 trans_norm = np.linalg.norm(q2r[:3, 3])
                 if trans_norm > 1e-9:
                     q2r[:3, 3] = q2r[:3, 3] / trans_norm
                 q2r_poses.append(q2r)
 
-            final_pose = self.motion_averaging.motion_averaging(ref_gt_c2w, q2r_poses)
+            logging.info(
+                "Motion averaging inputs: map_refs=%d temporal_refs=%d temporal_available=%d total_refs=%d",
+                len(ref_gt_c2w),
+                len(temporal_gt_c2w),
+                temporal_available,
+                len(all_gt_c2w),
+            )
+
+            final_pose = self.motion_averaging.motion_averaging(all_gt_c2w, q2r_poses)
             return LocalizationResult(
                 pose_c2w=final_pose,
                 depth=None,

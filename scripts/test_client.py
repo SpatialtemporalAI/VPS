@@ -5,17 +5,14 @@ VPS Test Client
 This script demonstrates how to use the VPS service.
 """
 
-import base64
-from curses import tigetflag
 import requests
 import json
-from pathlib import Path
 import argparse
 import os
-import cv2
-import numpy as np
 import time
-def test_localization(base_url: str, image_path: str, depth_path: str):
+
+
+def test_localization(base_url: str, image_path: str, depth_path: str, robot_id: str):
     """Test the localization endpoint."""
     print(f"Testing localization with image: {image_path}")
     
@@ -27,9 +24,12 @@ def test_localization(base_url: str, image_path: str, depth_path: str):
         if depth_path and os.path.exists(depth_path):
             depth_file = open(depth_path, 'rb')
             files['depth'] = depth_file
-        data = {'last_pose': json.dumps({'x': 0, 'y': 0, 'z': 0})}
+        data = {
+            'robot_id': robot_id,
+            'last_pose': json.dumps({'x': 0, 'y': 0, 'z': 0}),
+        }
         try:
-            response = requests.post(f"{base_url}/localize", files=files, data=data)
+            response = requests.post(f"{base_url}/localize_by_light", files=files, data=data)
         finally:
             # 确保depth文件被关闭
             if depth_file:
@@ -53,19 +53,19 @@ def test_localization(base_url: str, image_path: str, depth_path: str):
             # map_data = result.get('map_png_b64')
             # map_shape = result.get('map_shape')
             # map_dtype = result.get('map_dtype')
-            img_bytes = base64.b64decode(result['map_png_b64'])
-            occ_map = cv2.imdecode(
-                np.frombuffer(img_bytes, np.uint8),
-                cv2.IMREAD_GRAYSCALE
-            )
-            print("\n--- 重构后的占用地图 (Occupancy Map) ---")
-            if occ_map is not None:
-                print(f"✅ 地图重构成功！形状: {occ_map.shape}, 类型: {occ_map.dtype}")
-                print(f"地图像素值 Min/Max: {np.min(occ_map)} / {np.max(occ_map)}")
-                # 示例：保存重构的地图为 PNG 文件
-                cv2.imwrite("Reconstructed_Occupancy_Map.png", occ_map)
-            else:
-                print("未接收到完整的地图数据（缺少 map_data, map_shape, 或 map_dtype)。")
+            # img_bytes = base64.b64decode(result['map_png_b64'])
+            # occ_map = cv2.imdecode(
+            #     np.frombuffer(img_bytes, np.uint8),
+            #     cv2.IMREAD_GRAYSCALE
+            # )
+            # print("\n--- 重构后的占用地图 (Occupancy Map) ---")
+            # if occ_map is not None:
+            #     print(f"✅ 地图重构成功！形状: {occ_map.shape}, 类型: {occ_map.dtype}")
+            #     print(f"地图像素值 Min/Max: {np.min(occ_map)} / {np.max(occ_map)}")
+            #     # 示例：保存重构的地图为 PNG 文件
+            #     cv2.imwrite("Reconstructed_Occupancy_Map.png", occ_map)
+            # else:
+            #     print("未接收到完整的地图数据（缺少 map_data, map_shape, 或 map_dtype)。")
 
         else:
             print(f"✗ Localization failed: {response.status_code}")
@@ -79,6 +79,8 @@ def main():
                        help='Path to test image')
     parser.add_argument('--depth', type=str, required=False,default=None,
                        help='Path to test image depth')
+    parser.add_argument('--robot-id', type=str, default='test',
+                       help='Robot ID sent to the VPS service')
 
     args = parser.parse_args()
     
@@ -88,7 +90,7 @@ def main():
     
     # Test localization
     s = time.time()
-    test_localization(args.url, args.image, args.depth)
+    test_localization(args.url, args.image, args.depth, args.robot_id)
     e = time.time()
     print(f"Time taken: {e - s} seconds")
 

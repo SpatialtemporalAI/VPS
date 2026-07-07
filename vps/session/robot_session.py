@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -18,6 +18,6 @@ class RobotSession:
     def bind_map(self, map_id: str) -> None:
         self.active_map_id = map_id
 
-    def update_pose(self, pose: np.ndarray) -> None:
+    def update_pose(self, pose: np.ndarray, update_time: Optional[datetime] = None) -> None:
         self.last_pose = pose
-        self.last_update_time = datetime.utcnow()
+        self.last_update_time = update_time or datetime.now(timezone.utc)
