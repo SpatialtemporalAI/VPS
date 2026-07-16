@@ -17,8 +17,8 @@ import yaml
 """
 
 # 配置参数
-file_directory = "/data/nvme0n1/phw/烯创26-0624/"  
-file_name = "烯创0624-无顶"
+file_directory = "/home/panhewei/xichuang0710/2026-07-10_10-10-27/"
+file_name = "colorized_box_crop_c5.6765_m3.5874_z1.6319"
 pcd_file = file_directory + file_name + ".ply"
 
 
@@ -26,7 +26,7 @@ map_resolution = 0.05
 thre_z_min =  0#保留点云的最低高度:readpoint_height[0] +0.15获得
 thre_z_max =  1.5#保留点云的最高高度，单位m
 thre_radius = 0.1 #半径滤波 单位m
-thres_point_count = 3 #半径滤波的个数 
+thres_point_count = 3 #半径滤波的个数
 min_area_count = 20 #去除黑色小点点的最小黑色面积
 
 
@@ -34,11 +34,11 @@ min_area_count = 20 #去除黑色小点点的最小黑色面积
 def remove_black_regions(A, min_area=min_area_count):
     """
     处理矩阵 A:去除小的黑色区域，反转颜色。
-    
+
     参数:
         A: 输入的二值矩阵，假设黑色为前景，白色为背景
         min_area: 最小面积阈值，用于去除小区域
-        
+
     返回:
         processed_image: 处理后的图像
     """
@@ -55,7 +55,7 @@ def remove_black_regions(A, min_area=min_area_count):
 
     # 反转回原色
     processed_image = cv2.bitwise_not(binary)
-    
+
     return processed_image
 
 
@@ -65,7 +65,7 @@ def remove_white_regions(A, min_area=min_area_count):
     参数:
         A: 输入的二值矩阵，假设白色为前景，黑色为背景
         min_area: 最小面积阈值，用于去除小区域
-        
+
     返回:
         processed_image: 处理后的图像
     """
@@ -79,15 +79,15 @@ def remove_white_regions(A, min_area=min_area_count):
     for i in range(1, num_labels):  # 从1开始，跳过背景
         if stats[i, cv2.CC_STAT_AREA] < min_area:
             binary[labels == i] = 255  # 将小区域置为白色
-    
+
     return binary
 
 # 读取PCD文件
 pcd = o3d.io.read_point_cloud(pcd_file)
 
 
-pcd = pcd.voxel_down_sample(voxel_size=0.001)  
-# pcd, _ = pcd.remove_radius_outlier(nb_points=5, radius=0.1) 
+pcd = pcd.voxel_down_sample(voxel_size=0.001)
+# pcd, _ = pcd.remove_radius_outlier(nb_points=5, radius=0.1)
 points = np.asarray(pcd.points)
 o3d.visualization.draw_geometries([pcd], window_name="原始点云")
 # points = points[points[:, 1] <=9]

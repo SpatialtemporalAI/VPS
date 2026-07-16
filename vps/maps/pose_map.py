@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -25,6 +25,9 @@ class PoseMapConfig:
     nav_map_path: Optional[Path] = None
     nav_yaml_path: Optional[Path] = None
     vggt_omega_ref_cache_path: Optional[Path] = None
+    gaussian_ply_path: Optional[Path] = None
+    gaussian_camera: Optional[Dict[str, Any]] = None
+    query_camera: Optional[Dict[str, Any]] = None
 
 
 @dataclass

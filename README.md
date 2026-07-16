@@ -35,6 +35,10 @@ service.py
   - `y`
   - `theta`
 
+## 3DGS 训练与在线渲染来源
+
+本项目的 3DGS 训练与在线渲染实现基于 [ai4ce/wanderland](https://github.com/ai4ce/wanderland) 和 [nerfstudio-project/gsplat](https://github.com/nerfstudio-project/gsplat)。
+
 ## 安装
 
 ### 1. 克隆仓库

@@ -18,6 +18,7 @@ from vps.maps.pose_map import PoseMap, PoseMapConfig
 from vps.maps.vpr_map import VPRMap, VPRMapConfig
 from vps.pipeline.pose_pipeline import LocalizationResult, PosePipeline, PosePipelineInput
 from vps.pipeline.vpr_pipeline import VPRPipeline
+from vps.refinement import GsplatRefinementPipeline
 from vps.utils.trajectory_filter import TrajectoryFilter
 import time
 import logging
@@ -39,6 +40,7 @@ class LocalizationCoordinator:
         pose_pipeline: PosePipeline,
         models: Optional[CoordinatorModels] = None,
         trajectory_filter: Optional[TrajectoryFilter] = None,
+        refinement_pipeline: Optional[GsplatRefinementPipeline] = None,
     ):
         self.model_manager = model_manager
         self.map_manager = map_manager
@@ -47,6 +49,7 @@ class LocalizationCoordinator:
         self.pose_pipeline = pose_pipeline
         self.models = models or CoordinatorModels()
         self.trajectory_filter = trajectory_filter or TrajectoryFilter()
+        self.refinement_pipeline = refinement_pipeline
         self.result_map_dir = Path("data/outputs/result_maps")
         self._result_map_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -66,6 +69,9 @@ class LocalizationCoordinator:
         nav_map_path: Optional[Path] = None,
         nav_yaml_path: Optional[Path] = None,
         vggt_omega_ref_cache_path: Optional[Path] = None,
+        gaussian_ply_path: Optional[Path] = None,
+        gaussian_camera: Optional[dict] = None,
+        query_camera: Optional[dict] = None,
     ) -> None:
         root_dir = Path(root_dir)
         vpr_map = VPRMap(
@@ -89,6 +95,9 @@ class LocalizationCoordinator:
                 nav_map_path=nav_map_path,
                 nav_yaml_path=nav_yaml_path,
                 vggt_omega_ref_cache_path=vggt_omega_ref_cache_path,
+                gaussian_ply_path=gaussian_ply_path,
+                gaussian_camera=gaussian_camera,
+                query_camera=query_camera,
             )
         )
         self.map_manager.register(
@@ -149,6 +158,31 @@ class LocalizationCoordinator:
             pose_map=map_instance.pose_map,
         )
         if pose_result.pose_c2w is not None:
+            if self.refinement_pipeline is not None:
+                refine_result = self.refinement_pipeline.run(
+                    query_image=vpr_result.query_image_path,
+                    initial_pose_c2w=pose_result.pose_c2w,
+                    pose_map=map_instance.pose_map,
+                    robot_id=robot_id,
+                )
+                if refine_result.accepted and refine_result.pose_c2w is not None:
+                    pose_result.pose_c2w = refine_result.pose_c2w
+                    logging.info(
+                        "[%s] gsplat_refinement_applied reason=%s inliers=%d reprojection_error=%s",
+                        request_tag,
+                        refine_result.reason,
+                        refine_result.pnp_inliers,
+                        self._fmt_optional_float(refine_result.reprojection_error),
+                    )
+                else:
+                    logging.info(
+                        "[%s] gsplat_refinement_skipped reason=%s matches=%d valid_depth=%d inliers=%d",
+                        request_tag,
+                        refine_result.reason,
+                        refine_result.num_matches,
+                        refine_result.valid_depth_matches,
+                        refine_result.pnp_inliers,
+                    )
             now = datetime.now(timezone.utc)
             pose_decision = self.trajectory_filter.evaluate_pose(
                 previous_pose=session.last_pose,

@@ -28,6 +28,7 @@ from vps.pipeline import (
     VPRPipeline,
     VPRPipelineConfig,
 )
+from vps.refinement import GsplatRefinementConfig, GsplatRefinementPipeline
 from vps.utils.trajectory_filter import TrajectoryFilter, TrajectoryFilterConfig
 
 app = Flask(__name__)
@@ -93,12 +94,44 @@ def create_app(config_path: str = "configs/default.yaml"):
     max_yaw_rate_degps = trajectory_filter_cfg.get("max_yaw_rate_degps")
     if max_yaw_rate_degps is not None:
         max_yaw_rate_degps = float(max_yaw_rate_degps)
+    refinement_pipeline = None
+    gsplat_refine_cfg = app_config.get("gsplat_refinement", {})
+    if gsplat_refine_cfg.get("enabled", False):
+        refinement_pipeline = GsplatRefinementPipeline(
+            GsplatRefinementConfig(
+                enabled=True,
+                matcher=str(gsplat_refine_cfg.get("matcher", "superpoint_lightglue")),
+                min_matches=int(gsplat_refine_cfg.get("min_matches", 80)),
+                min_pnp_inliers=int(gsplat_refine_cfg.get("min_pnp_inliers", 30)),
+                max_translation_delta_m=float(
+                    gsplat_refine_cfg.get("max_translation_delta_m", 1.0)
+                ),
+                max_yaw_delta_deg=float(gsplat_refine_cfg.get("max_yaw_delta_deg", 45.0)),
+                alpha_threshold=float(gsplat_refine_cfg.get("alpha_threshold", 0.1)),
+                min_depth=float(gsplat_refine_cfg.get("min_depth", 0.05)),
+                max_depth=float(gsplat_refine_cfg.get("max_depth", 100.0)),
+                ransac_reproj_error=float(
+                    gsplat_refine_cfg.get("ransac_reproj_error", 4.0)
+                ),
+                ransac_confidence=float(gsplat_refine_cfg.get("ransac_confidence", 0.999)),
+                ransac_iterations=int(gsplat_refine_cfg.get("ransac_iterations", 1000)),
+                max_keypoints=int(gsplat_refine_cfg.get("max_keypoints", 4096)),
+                detection_threshold=float(
+                    gsplat_refine_cfg.get("detection_threshold", 0.0005)
+                ),
+                save_render=bool(gsplat_refine_cfg.get("save_render", False)),
+                render_camera=gsplat_refine_cfg.get("render_camera"),
+                query_camera=gsplat_refine_cfg.get("query_camera"),
+                device=str(gsplat_refine_cfg.get("device", app_config["system"]["device"])),
+            )
+        )
     coordinator = LocalizationCoordinator(
         model_manager=model_manager,
         map_manager=map_manager,
         session_manager=session_manager,
         vpr_pipeline=vpr_pipeline,
         pose_pipeline=pose_pipeline,
+        refinement_pipeline=refinement_pipeline,
         trajectory_filter=TrajectoryFilter(
             TrajectoryFilterConfig(
                 enabled=trajectory_filter_cfg.get("enabled", True),
@@ -139,6 +172,9 @@ def create_app(config_path: str = "configs/default.yaml"):
             nav_map_path=item.get("nav_map_path"),
             nav_yaml_path=item.get("nav_yaml_path"),
             vggt_omega_ref_cache_path=item.get("vggt_omega_ref_cache_path"),
+            gaussian_ply_path=item.get("gaussian_ply_path"),
+            gaussian_camera=item.get("gaussian_camera"),
+            query_camera=item.get("query_camera"),
         )
 
     check_ref = app_config["vpr"].get("check_ref", False)
@@ -221,6 +257,9 @@ def _build_map_definition(
         "nav_map_path": Path(item["nav_map_path"]) if item.get("nav_map_path") else None,
         "nav_yaml_path": Path(item["nav_yaml_path"]) if item.get("nav_yaml_path") else None,
         "vggt_omega_ref_cache_path": Path(item["vggt_omega_ref_cache_path"]) if item.get("vggt_omega_ref_cache_path") else None,
+        "gaussian_ply_path": Path(item["gaussian_ply_path"]) if item.get("gaussian_ply_path") else None,
+        "gaussian_camera": item.get("gaussian_camera"),
+        "query_camera": item.get("query_camera"),
     }
 
 

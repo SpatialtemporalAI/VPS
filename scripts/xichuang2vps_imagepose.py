@@ -9,9 +9,9 @@ from typing import Iterable, Optional
 import numpy as np
 
 
-DEFAULT_IMGPOSE_PATH = Path("/data/nvme0n1/phw/烯创26-0624/ImgPose.txt")
-DEFAULT_IMAGE_ROOT = Path("/data/nvme0n1/phw/烯创26-0624/undistort")
-DEFAULT_OUTPUT_DIR = Path("/data/nvme0n1/phw/烯创26-0624/day/train")
+DEFAULT_IMGPOSE_PATH = Path("/home/panhewei/xichuang0710/2026-07-10_10-10-27/ImgPose.txt")
+DEFAULT_IMAGE_ROOT = Path("/home/panhewei/xichuang0710/2026-07-10_10-10-27/undistort")
+DEFAULT_OUTPUT_DIR = Path("/home/panhewei/xichuang0710/2026-07-10_10-10-27/day/train")
 
 
 @dataclass

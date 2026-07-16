@@ -13,7 +13,7 @@ vpr:
   use_spatial_filtering: False   #是否开启空间过滤(上次定位结果附近，过滤远距离相似，暂时没必要开)
   spatial_radius: 1.0 #空间过滤半径
   similarity_threshold: 0.0001 #vpr相似度阈值 有点难确定
-  
+
 
 # Pose Estimation settings
 pose:
@@ -54,7 +54,7 @@ pose:
       max_frames: 10
       motion_max_frames: 10
       max_age_seconds: 60.0
-  
+
 
 # System settings
 system:
@@ -65,7 +65,7 @@ system:
 # Runtime trajectory sanity filter.
 # Rejects physically impossible pose jumps before updating robot session/history.
 trajectory_filter:
-  enabled: true
+  enabled: false
   max_speed_mps: 2.0          #机器人最大平移速度，超过 max_speed * dt + margin 的结果会被丢弃
   speed_margin_m: 0.5         #定位噪声/时间误差容错距离
   min_time_delta_seconds: 0.1 #高频请求时用于速度计算的最小dt，避免dt太小导致误杀
@@ -75,6 +75,23 @@ trajectory_filter:
   temporal_min_translation_m: 0.15 #历史帧至少移动这么多才加入，避免静止重复帧
   temporal_min_yaw_deg: 8.0        #或旋转超过这个角度才加入
   temporal_min_interval_seconds: 0.5
+
+# Optional online Gaussian-map refinement.
+# Gaussian assets are configured per map variant, not globally.
+gsplat_refinement:
+  enabled: true
+  save_render: true # true: 保存优化前 render 与优化后 render_fix 到 data/outputs/3dgs_renders/
+  matcher: "superpoint_lightglue"
+  min_matches: 80
+  min_pnp_inliers: 30
+  ransac_reproj_error: 4.0
+  max_translation_delta_m: 1.0
+  max_yaw_delta_deg: 45.0
+  alpha_threshold: 0.1
+  min_depth: 0.05
+  max_depth: 100.0
+  max_keypoints: 4096
+  detection_threshold: 0.0005
 
 # Service settings
 service:
@@ -98,11 +115,28 @@ service:
     - id: "floor26"
       light_variants:
         bright:
-          ref_data_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/train"
-          ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/outputs/ref.h5"
+          ref_data_path: "/home/panhewei/xichuang0710/2026-07-10_10-10-27/day/train"
+          ref_descriptors_path: "/home/panhewei/xichuang0710/2026-07-10_10-10-27/day/outputs/ref.h5"
           # Optional fixed-ref tensor cache for this map variant.
           # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
-          vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0624/day_keyframes/outputs/256.pt" 
+          vggt_omega_ref_cache_path: "/home/panhewei/xichuang0710/2026-07-10_10-10-27/day/outputs/256.pt"
+          # Optional: map-scoped Gaussian asset for gsplat_refinement.
+          gaussian_ply_path: "/home/panhewei/FastGS/outputs/xichuang5m_wanderland_3dgs/ply/point_cloud_29999.ply"
+          gaussian_camera:
+            width: 640
+            height: 480
+            fx: 382.1170654296875
+            fy: 381.6483154296875
+            cx: 316.6358642578125
+            cy: 248.07420349121094
+          # query_camera can be omitted when it is the same as gaussian_camera.
+          query_camera:
+            width: 640
+            height: 480
+            fx: 382.1170654296875
+            fy: 381.6483154296875
+            cx: 316.6358642578125
+            cy: 248.07420349121094
           nav_map_path: "/data/nvme0n1/phw/烯创26-0624/map.png"
           nav_yaml_path: "/data/nvme0n1/phw/烯创26-0624/map.yaml"
     # - id: "floor26"
@@ -112,7 +146,7 @@ service:
     #       ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/ref.h5"
     #       # Optional fixed-ref tensor cache for this map variant.
     #       # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
-    #       vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/vggt_omega_ref_256_maxsize.pt" 
+    #       vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/vggt_omega_ref_256_maxsize.pt"
     #       nav_map_path: "/home/panhewei/VPS_online/map26.png"
     #       nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
     #     dark:
@@ -125,7 +159,7 @@ service:
     #   ref_descriptors_path: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/ref.h5"
     #   nav_map_path: "/home/panhewei/VPS_online/map3.png"
     #   nav_yaml_path: "/home/panhewei/VPS_online/map3.yaml"
-    
+
   # cleanup_temp_files: true  # Clean up temporary files after processing
   light_selector:
     brightness_threshold: 110.0
@@ -134,9 +168,9 @@ service:
     switch_confirm_frames: 3
 
 
-depth_nav:  
+depth_nav:
   able: False #开启深度修复避障导航
-  height_up: "z"   #or y 哪个坐标轴表示高度 朝上 
+  height_up: "z"   #or y 哪个坐标轴表示高度 朝上
   camera_real_h: 1.19 #1.18 #相机实际高度（机器人相机距离地板高度）
   min_dist: 0.1
   max_dist: 5.0
