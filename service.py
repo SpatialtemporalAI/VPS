@@ -5,10 +5,12 @@ import datetime
 import json
 import logging
 import os
+import re
 import threading
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import cv2
 import numpy as np
@@ -31,6 +33,38 @@ from vps.pipeline import (
 from vps.refinement import GsplatRefinementConfig, GsplatRefinementPipeline
 from vps.utils.trajectory_filter import TrajectoryFilter, TrajectoryFilterConfig
 
+
+ROBOT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+class FairInferenceGate:
+    """A process-local FIFO gate for shared GPU inference resources."""
+
+    def __init__(self, capacity: int = 1):
+        if capacity < 1:
+            raise ValueError("FairInferenceGate capacity must be at least 1.")
+        self._capacity = capacity
+        self._in_use = 0
+        self._queue: deque[object] = deque()
+        self._condition = threading.Condition()
+
+    def acquire(self) -> None:
+        ticket = object()
+        with self._condition:
+            self._queue.append(ticket)
+            while self._queue[0] is not ticket or self._in_use >= self._capacity:
+                self._condition.wait()
+            self._queue.popleft()
+            self._in_use += 1
+
+    def release(self) -> None:
+        with self._condition:
+            if self._in_use <= 0:
+                raise RuntimeError("FairInferenceGate released without a matching acquire.")
+            self._in_use -= 1
+            self._condition.notify_all()
+
+
 app = Flask(__name__)
 
 DEFAULT_ROBOT_ID = "0"
@@ -41,6 +75,7 @@ default_logical_map_id: str | None = None
 light_map_groups: Dict[str, Dict[str, str]] = {}
 _robot_request_locks: dict[str, threading.Lock] = {}
 _robot_request_locks_guard = threading.Lock()
+_inference_gate = FairInferenceGate(capacity=1)
 
 
 def create_app(config_path: str = "configs/default.yaml"):
@@ -293,6 +328,36 @@ def _get_robot_request_lock(robot_id: str) -> threading.Lock:
         return lock
 
 
+def _validate_robot_id(robot_id: str) -> str | None:
+    if ROBOT_ID_PATTERN.fullmatch(robot_id):
+        return robot_id
+    return None
+
+
+def _run_with_robot_request_lock(
+    robot_id: str,
+    request_tag: str,
+    operation: Callable[[], Any],
+):
+    """Reject a newer frame from the same robot while its prior frame is active."""
+    request_lock = _get_robot_request_lock(robot_id)
+    if not request_lock.acquire(blocking=False):
+        logging.info("[%s] rejected status=busy", request_tag)
+        response = jsonify(
+            {
+                "status": "busy",
+                "robot_id": robot_id,
+                "message": "previous request for this robot is still running",
+            }
+        )
+        response.headers["Retry-After"] = "1"
+        return response, 429
+    try:
+        return operation()
+    finally:
+        request_lock.release()
+
+
 def _ensure_robot_map_binding(robot_id: str, requested_map_id: str | None) -> None:
     assert coordinator is not None
     assert default_map_id is not None
@@ -472,56 +537,57 @@ def _run_localization_request(
     start_time: float,
     extra_response_fields: Dict[str, Any] | None = None,
 ):
+    """Run a request after its caller has acquired the per-robot request lock."""
     global coordinator, app_config
     assert coordinator is not None
     assert app_config is not None
 
-    request_lock = _get_robot_request_lock(robot_id)
     logging.info(f"[{request_tag}] request_parse_time={time.time() - start_time:.6f}s")
 
-    lock_wait_start = time.time()
-    with request_lock:
-        logging.info(f"[{request_tag}] lock_wait_time={time.time() - lock_wait_start:.6f}s")
-        os.makedirs(app_config["service"]["temp_dir"], exist_ok=True)
-        rgb_name = f"{Path(app_config['service']['temp_rgb_name']).stem}_{robot_id}{Path(app_config['service']['temp_rgb_name']).suffix}"
-        query_image_path = os.path.join(
-            app_config["service"]["temp_dir"],
-            rgb_name,
-        )
-        rgb_save_start = time.time()
-        rgb_file.save(query_image_path)
-        logging.info(f"[{request_tag}] rgb_save_time={time.time() - rgb_save_start:.6f}s path={query_image_path}")
+    os.makedirs(app_config["service"]["temp_dir"], exist_ok=True)
+    rgb_name = f"{Path(app_config['service']['temp_rgb_name']).stem}_{robot_id}{Path(app_config['service']['temp_rgb_name']).suffix}"
+    query_image_path = os.path.join(
+        app_config["service"]["temp_dir"],
+        rgb_name,
+    )
+    rgb_save_start = time.time()
+    rgb_file.save(query_image_path)
+    logging.info(f"[{request_tag}] rgb_save_time={time.time() - rgb_save_start:.6f}s path={query_image_path}")
 
-        depth_path = None
-        if "depth" in request.files:
-            depth_file = request.files["depth"]
-            if depth_file and depth_file.filename:
-                logging.info(f"[{request_tag}] depth_file={depth_file.filename}")
-                depth_process_start = time.time()
-                file_ext = os.path.splitext(depth_file.filename)[1].lower()
-                depth_name = f"{Path(app_config['service']['temp_depth_name']).stem}_{robot_id}{Path(app_config['service']['temp_depth_name']).suffix}"
-                depth_path = os.path.join(
-                    app_config["service"]["temp_dir"],
-                    depth_name,
-                )
-                if file_ext == ".png":
-                    filestr = depth_file.read()
-                    npimg = np.frombuffer(filestr, np.uint8)
-                    depth_data_png = cv2.imdecode(npimg, cv2.IMREAD_ANYDEPTH)
-                    if depth_data_png is not None:
-                        depth_data = depth_data_png.astype(np.float32) / 1000.0
-                        np.save(depth_path, depth_data)
-                        logging.info(f"[{request_tag}] depth_png_to_npy_saved={depth_path}")
-                elif file_ext == ".npy":
-                    depth_file.save(depth_path)
-                    logging.info(f"[{request_tag}] depth_npy_saved={depth_path}")
-                logging.info(f"[{request_tag}] depth_process_time={time.time() - depth_process_start:.6f}s")
+    depth_path = None
+    if "depth" in request.files:
+        depth_file = request.files["depth"]
+        if depth_file and depth_file.filename:
+            logging.info(f"[{request_tag}] depth_file={depth_file.filename}")
+            depth_process_start = time.time()
+            file_ext = os.path.splitext(depth_file.filename)[1].lower()
+            depth_name = f"{Path(app_config['service']['temp_depth_name']).stem}_{robot_id}{Path(app_config['service']['temp_depth_name']).suffix}"
+            depth_path = os.path.join(
+                app_config["service"]["temp_dir"],
+                depth_name,
+            )
+            if file_ext == ".png":
+                filestr = depth_file.read()
+                npimg = np.frombuffer(filestr, np.uint8)
+                depth_data_png = cv2.imdecode(npimg, cv2.IMREAD_ANYDEPTH)
+                if depth_data_png is not None:
+                    depth_data = depth_data_png.astype(np.float32) / 1000.0
+                    np.save(depth_path, depth_data)
+                    logging.info(f"[{request_tag}] depth_png_to_npy_saved={depth_path}")
+            elif file_ext == ".npy":
+                depth_file.save(depth_path)
+                logging.info(f"[{request_tag}] depth_npy_saved={depth_path}")
+            logging.info(f"[{request_tag}] depth_process_time={time.time() - depth_process_start:.6f}s")
 
-        map_bind_start = time.time()
-        _ensure_robot_map_binding(robot_id, requested_map_id)
-        logging.info(f"[{request_tag}] map_binding_time={time.time() - map_bind_start:.6f}s map_id={requested_map_id}")
+    map_bind_start = time.time()
+    _ensure_robot_map_binding(robot_id, requested_map_id)
+    logging.info(f"[{request_tag}] map_binding_time={time.time() - map_bind_start:.6f}s map_id={requested_map_id}")
 
-        logging.info(f"[{request_tag}] preprocess_total_time={time.time() - start_time:.6f}s")
+    logging.info(f"[{request_tag}] preprocess_total_time={time.time() - start_time:.6f}s")
+    gpu_wait_start = time.time()
+    _inference_gate.acquire()
+    logging.info(f"[{request_tag}] gpu_queue_wait_time={time.time() - gpu_wait_start:.6f}s")
+    try:
         localize_start = time.time()
         result = coordinator.localize(
             robot_id=robot_id,
@@ -529,6 +595,8 @@ def _run_localization_request(
             depth_paths=[Path(depth_path)] if depth_path else None,
         )
         logging.info(f"[{request_tag}] coordinator_localize_time={time.time() - localize_start:.6f}s")
+    finally:
+        _inference_gate.release()
     logging.info(f"[{request_tag}] post_lock_total_time={time.time() - start_time:.6f}s")
 
     response_data: Dict[str, Any] = {}
@@ -583,7 +651,9 @@ def localize():
         if "image" not in request.files:
             return jsonify({"error": "No image file provided"}), 400
         rgb_file = request.files["image"]
-        robot_id = request.form.get("robot_id", DEFAULT_ROBOT_ID)
+        robot_id = _validate_robot_id(request.form.get("robot_id", DEFAULT_ROBOT_ID))
+        if robot_id is None:
+            return jsonify({"error": "Invalid robot_id. Use [A-Za-z0-9_-]{1,64}."}), 400
         requested_map_id = request.form.get("map_id")
         request_tag = f"robot={robot_id}"
 
@@ -595,12 +665,16 @@ def localize():
         if not any(rgb_file.filename.lower().endswith(ext) for ext in allowed_extensions):
             return jsonify({"error": f"Unsupported file format. Supported: {allowed_extensions}"}), 400
 
-        return _run_localization_request(
-            rgb_file=rgb_file,
-            robot_id=robot_id,
-            requested_map_id=requested_map_id,
-            request_tag=request_tag,
-            start_time=start_time,
+        return _run_with_robot_request_lock(
+            robot_id,
+            request_tag,
+            lambda: _run_localization_request(
+                rgb_file=rgb_file,
+                robot_id=robot_id,
+                requested_map_id=requested_map_id,
+                request_tag=request_tag,
+                start_time=start_time,
+            ),
         )
     except Exception as exc:
         logging.error(f"Error during localization: {str(exc)}")
@@ -631,7 +705,9 @@ def localize_by_light():
         if "image" not in request.files:
             return jsonify({"error": "No image file provided"}), 400
         rgb_file = request.files["image"]
-        robot_id = request.form.get("robot_id", DEFAULT_ROBOT_ID)
+        robot_id = _validate_robot_id(request.form.get("robot_id", DEFAULT_ROBOT_ID))
+        if robot_id is None:
+            return jsonify({"error": "Invalid robot_id. Use [A-Za-z0-9_-]{1,64}."}), 400
         logical_map_id = request.form.get("map_id")
         request_tag = f"robot={robot_id}|light"
 
@@ -643,61 +719,68 @@ def localize_by_light():
         if not any(rgb_file.filename.lower().endswith(ext) for ext in allowed_extensions):
             return jsonify({"error": f"Unsupported file format. Supported: {allowed_extensions}"}), 400
 
-        temp_dir = Path(app_config["service"]["temp_dir"])
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        light_probe_suffix = Path(rgb_file.filename).suffix or ".jpg"
-        light_probe_path = temp_dir / f"query_{robot_id}{light_probe_suffix}"
-        rgb_file.save(light_probe_path)
+        def run_light_aware_localization():
+            temp_dir = Path(app_config["service"]["temp_dir"])
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            light_probe_suffix = Path(rgb_file.filename).suffix or ".jpg"
+            light_probe_path = temp_dir / f"query_{robot_id}{light_probe_suffix}"
+            rgb_file.save(light_probe_path)
 
-        light_cfg = app_config.get("service", {}).get("light_selector", {})
-        target_logical_map_id = logical_map_id or default_logical_map_id
-        mean_brightness = _measure_image_brightness(light_probe_path)
-        light_decision = _select_light_state_with_history(
-            robot_id=robot_id,
-            logical_map_id=target_logical_map_id,
-            mean_brightness=mean_brightness,
-            light_cfg=light_cfg,
-        )
-        resolved_map_id, resolved_variant = _resolve_light_map_id(
-            requested_map_id=logical_map_id,
-            detected_light_state=light_decision["selected_state"],
-        )
-        logging.info(
-            "[%s] light_detection mean_brightness=%.3f observed_state=%s selected_state=%s "
-            "candidate_state=%s candidate_count=%d switched=%s dark_threshold_low=%.3f "
-            "bright_threshold_high=%.3f logical_map=%s resolved_map=%s resolved_variant=%s",
+            light_cfg = app_config.get("service", {}).get("light_selector", {})
+            target_logical_map_id = logical_map_id or default_logical_map_id
+            mean_brightness = _measure_image_brightness(light_probe_path)
+            light_decision = _select_light_state_with_history(
+                robot_id=robot_id,
+                logical_map_id=target_logical_map_id,
+                mean_brightness=mean_brightness,
+                light_cfg=light_cfg,
+            )
+            resolved_map_id, resolved_variant = _resolve_light_map_id(
+                requested_map_id=logical_map_id,
+                detected_light_state=light_decision["selected_state"],
+            )
+            logging.info(
+                "[%s] light_detection mean_brightness=%.3f observed_state=%s selected_state=%s "
+                "candidate_state=%s candidate_count=%d switched=%s dark_threshold_low=%.3f "
+                "bright_threshold_high=%.3f logical_map=%s resolved_map=%s resolved_variant=%s",
+                request_tag,
+                mean_brightness,
+                light_decision["observed_state"],
+                light_decision["selected_state"],
+                light_decision["candidate_state"],
+                light_decision["candidate_count"],
+                light_decision["switched"],
+                light_decision["dark_threshold_low"],
+                light_decision["bright_threshold_high"],
+                target_logical_map_id,
+                resolved_map_id,
+                resolved_variant,
+            )
+
+            rgb_file.stream.seek(0)
+            return _run_localization_request(
+                rgb_file=rgb_file,
+                robot_id=robot_id,
+                requested_map_id=resolved_map_id,
+                request_tag=request_tag,
+                start_time=start_time,
+                extra_response_fields={
+                    "light_state": light_decision["selected_state"],
+                    "observed_light_state": light_decision["observed_state"],
+                    "mean_brightness": mean_brightness,
+                    "logical_map_id": target_logical_map_id,
+                    "resolved_map_id": resolved_map_id,
+                    "resolved_light_variant": resolved_variant,
+                    "light_candidate_state": light_decision["candidate_state"],
+                    "light_candidate_count": light_decision["candidate_count"],
+                    "light_switched": light_decision["switched"],
+                },
+            )
+
+        return _run_with_robot_request_lock(
+            robot_id,
             request_tag,
-            mean_brightness,
-            light_decision["observed_state"],
-            light_decision["selected_state"],
-            light_decision["candidate_state"],
-            light_decision["candidate_count"],
-            light_decision["switched"],
-            light_decision["dark_threshold_low"],
-            light_decision["bright_threshold_high"],
-            target_logical_map_id,
-            resolved_map_id,
-            resolved_variant,
-        )
-
-        rgb_file.stream.seek(0)
-        return _run_localization_request(
-            rgb_file=rgb_file,
-            robot_id=robot_id,
-            requested_map_id=resolved_map_id,
-            request_tag=request_tag,
-            start_time=start_time,
-            extra_response_fields={
-                "light_state": light_decision["selected_state"],
-                "observed_light_state": light_decision["observed_state"],
-                "mean_brightness": mean_brightness,
-                "logical_map_id": target_logical_map_id,
-                "resolved_map_id": resolved_map_id,
-                "resolved_light_variant": resolved_variant,
-                "light_candidate_state": light_decision["candidate_state"],
-                "light_candidate_count": light_decision["candidate_count"],
-                "light_switched": light_decision["switched"],
-            },
+            run_light_aware_localization,
         )
     except Exception as exc:
         logging.error(f"Error during light-aware localization: {str(exc)}")
