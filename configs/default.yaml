@@ -85,7 +85,7 @@ gsplat_refinement:
   min_matches: 80
   min_pnp_inliers: 30
   ransac_reproj_error: 4.0
-  max_translation_delta_m: 1.0
+  max_translation_delta_m: 3.0
   max_yaw_delta_deg: 45.0
   alpha_threshold: 0.1
   min_depth: 0.05
@@ -139,21 +139,38 @@ service:
             cy: 248.07420349121094
           nav_map_path: "/data/nvme0n1/phw/烯创26-0624/map.png"
           nav_yaml_path: "/data/nvme0n1/phw/烯创26-0624/map.yaml"
-    # - id: "floor26"
-    #   light_variants:
-    #     bright:
-    #       ref_data_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/train"
-    #       ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/ref.h5"
-    #       # Optional fixed-ref tensor cache for this map variant.
-    #       # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
-    #       vggt_omega_ref_cache_path: "/data/nvme0n1/phw/烯创26-0507/day_keyframes/outputs/vggt_omega_ref_256_maxsize.pt"
-    #       nav_map_path: "/home/panhewei/VPS_online/map26.png"
-    #       nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
-    #     dark:
-    #       ref_data_path: "/data/nvme0n1/phw/烯创26-0507/night/train"
-    #       ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/night/outputs/ref.h5"
-    #       nav_map_path: "/home/panhewei/VPS_online/map26.png"
-    #       nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
+    - id: "sustech0708"
+      light_variants:
+        bright:
+          ref_data_path: "/home/panhewei/南科0708/day/train"
+          ref_descriptors_path: "/home/panhewei/南科0708/outputs/ref.h5"
+          # Optional fixed-ref tensor cache for this map variant.
+          # Generate it from this map's rgb directory with the same VGGT-Omega mode/resolution/patch_size.
+          vggt_omega_ref_cache_path: "/home/panhewei/南科0708/outputs/256.pt"
+          # Optional: map-scoped Gaussian asset for gsplat_refinement.
+          gaussian_ply_path: "/home/panhewei/FastGS/outputs/sustech0708_wanderland_3dgs/ply/ckpt_29999_rank0.ply"
+          gaussian_camera:
+            width: 640
+            height: 480
+            fx: 382.1170654296875
+            fy: 381.6483154296875
+            cx: 316.6358642578125
+            cy: 248.07420349121094
+          # query_camera can be omitted when it is the same as gaussian_camera.
+          query_camera:
+            width: 640
+            height: 480
+            fx: 382.1170654296875
+            fy: 381.6483154296875
+            cx: 316.6358642578125
+            cy: 248.07420349121094
+          nav_map_path: "/home/panhewei/FastGS/outputs/sustech0708_wanderland_3dgs/ply/map.png"
+          nav_yaml_path: "/home/panhewei/FastGS/outputs/sustech0708_wanderland_3dgs/ply/map.yaml"
+        # dark:
+        #   ref_data_path: "/data/nvme0n1/phw/烯创26-0507/night/train"
+        #   ref_descriptors_path: "/data/nvme0n1/phw/烯创26-0507/night/outputs/ref.h5"
+        #   nav_map_path: "/home/panhewei/VPS_online/map26.png"
+        #   nav_yaml_path: "/home/panhewei/VPS_online/map26.yaml"
     # - id: "map_b"
     #   ref_data_path: "/data/nvme0n1/phw/烯创-三楼-0325/train"
     #   ref_descriptors_path: "/data/nvme0n1/phw/烯创-三楼-0325/outputs/ref.h5"

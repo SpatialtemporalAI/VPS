@@ -17,8 +17,8 @@ import yaml
 """
 
 # 配置参数
-file_directory = "/home/panhewei/xichuang0710/2026-07-10_10-10-27/"
-file_name = "colorized_box_crop_c5.6765_m3.5874_z1.6319"
+file_directory = "/home/panhewei/FastGS/outputs/sustech0708_wanderland_3dgs/ply/"
+file_name = "ckpt_29999_rank0"
 pcd_file = file_directory + file_name + ".ply"
 
 

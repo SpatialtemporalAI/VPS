@@ -30,3 +30,4 @@ __pycache__/
 *.pth.tar.lzma
 *.json
 *.ply
+map26.yaml
