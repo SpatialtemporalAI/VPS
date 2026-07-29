@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
 
 from vps.models.pose_model_contract import BasePoseModel, PoseModelOutput
-from vps.models.omnivggt_model import OmniVGGTModel
-from vps.models.vggt_omega_model import VGGTOmegaModel
-from vps.models.vggt_model import VGGTModel
 
 
 class PoseModel:
@@ -21,16 +19,32 @@ class PoseModel:
     def _create_backend(self) -> BasePoseModel:
         # The new models/pipeline stack has only migrated the VGGT-style model so far.
         if self.method in {"vggt", "vggt_nav"}:
-            return VGGTModel(self.config)
+            return self._load_backend(
+                "vps.models.vggt_model", "VGGTModel", "the VGGT Python package"
+            )(self.config)
         if self.method == "omnivggt":
-            return OmniVGGTModel(self.config)
+            return self._load_backend(
+                "vps.models.omnivggt_model", "OmniVGGTModel", "OmniVGGT and its dependencies"
+            )(self.config)
         if self.method in {"vggt_omega", "vggt-omega", "vggtomega"}:
-            return VGGTOmegaModel(self.config)
+            return self._load_backend(
+                "vps.models.vggt_omega_model", "VGGTOmegaModel", "VGGT-Omega and its dependencies"
+            )(self.config)
 
         raise NotImplementedError(
             f"Unsupported pose.method for service startup: {self.method}. "
             "The new service stack currently supports 'vggt', 'vggt_nav', 'omnivggt', and 'vggt_omega'."
         )
+
+    def _load_backend(self, module_name: str, class_name: str, dependency: str):
+        try:
+            module = import_module(module_name)
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                f"pose.method='{self.method}' requires {dependency}; "
+                f"failed to import '{exc.name}'. Install or initialize only that backend's dependency."
+            ) from exc
+        return getattr(module, class_name)
 
     def infer(
         self,
